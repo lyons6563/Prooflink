@@ -237,13 +237,9 @@ def reconcile_stream(
         only_in_payroll.to_csv(DATA_OUT / f"only_in_payroll_{base}.csv", index=False)
         only_in_rk.to_csv(DATA_OUT / f"only_in_recordkeeper_{base}.csv", index=False)
         amount_mismatch.to_csv(DATA_OUT / f"{base}_mismatch.csv", index=False)
-
     # Late funding detection if dates are present
-    if "pay_date" in payroll_norm.columns and "deposit_date" in rk_norm.columns:
-        # Propagate date columns into merged
-        merged["pay_date"] = merged["pay_date_payroll"]
-        merged["deposit_date"] = merged["deposit_date_rk"]
-
+    if "pay_date" in merged.columns and "deposit_date" in merged.columns:
+        # We already have pay_date and deposit_date columns on the merged frame
         lag = compute_business_days_lag(merged, "pay_date", "deposit_date")
         merged["business_days_lag"] = lag
 
@@ -264,6 +260,7 @@ def reconcile_stream(
             )
     else:
         print(f"No usable dates for late {stream_name} detection.")
+
 
 
 # =========================
