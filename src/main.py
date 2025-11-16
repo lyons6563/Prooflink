@@ -174,6 +174,58 @@ RK_VENDOR_SIGNATURES = {
 }
 
 # =========================
+# VENDOR-SPECIFIC COLUMN MAPS (HYBRID: STRICT + FLEXIBLE)
+# =========================
+
+# For now we fully define ADP + Empower; others can fallback to the generic COLUMN_MAP.
+# Structure:
+#   { vendor_name: { "required": {logical: [candidates...]}, "optional": {...} } }
+
+PAYROLL_VENDOR_COLUMN_MAPS = {
+    "ADP": {
+        "required": {
+            # Core identity + timing
+            "employee_id": ["EE ID"],
+            "pay_date": ["Check Date"],
+            # Core amounts (deferrals + loans)
+            "payroll_pretax": ["EE Deferral $"],
+            "payroll_roth": ["EE Roth $"],
+            "payroll_loan": ["Loan Repay $"],
+        },
+        "optional": {
+            # Fallback single-amount column for legacy flows
+            "amount": ["EE Deferral $"],
+            # You can add division/location/paygroup later if needed
+        },
+    },
+    # Stubs for future vendors – will fall back to generic COLUMN_MAP for now
+    "Paychex": {"required": {}, "optional": {}},
+    "Paylocity": {"required": {}, "optional": {}},
+    "Paycor": {"required": {}, "optional": {}},
+    "Workday": {"required": {}, "optional": {}},
+}
+
+RK_VENDOR_COLUMN_MAPS = {
+    "Empower": {
+        "required": {
+            "employee_id": ["Participant ID"],
+            "deposit_date": ["Trade Date"],
+            "rk_pretax": ["Employee Contribution"],
+            "rk_roth": ["Roth Contribution"],
+            "rk_loan": ["Loan Repayment"],
+        },
+        "optional": {
+            "amount": ["Employee Contribution"],
+        },
+    },
+    # Stubs for future recordkeepers – generic COLUMN_MAP will handle them for now
+    "Fidelity": {"required": {}, "optional": {}},
+    "Vanguard": {"required": {}, "optional": {}},
+    "Principal": {"required": {}, "optional": {}},
+    "Voya": {"required": {}, "optional": {}},
+}
+
+# =========================
 # CORE UTILITIES
 # =========================
 
@@ -203,6 +255,70 @@ def infer_column_mapping(df: pd.DataFrame, logical_map: dict[str, list[str]]) ->
             actual[logical] = match
 
     return actual
+
+def infer_vendor_mapping(
+    df: pd.DataFrame,
+    vendor_name: str | None,
+    vendor_maps: dict[str, dict],
+    generic_map: dict[str, list[str]],
+) -> dict[str, str]:
+    """
+    Hybrid mapping:
+      - If we have a vendor-specific map with required columns, try strict matching for those.
+      - If any required logical column is missing, fall back to generic mapping.
+      - Optional columns are mapped if present.
+      - Any remaining logicals can be filled by the generic infer_column_mapping as a fallback.
+    """
+    # No vendor or no mapping configured -> generic
+    if not vendor_name or vendor_name not in vendor_maps:
+        return infer_column_mapping(df, generic_map)
+
+    vendor_cfg = vendor_maps[vendor_name]
+    required_cfg = vendor_cfg.get("required") or {}
+    optional_cfg = vendor_cfg.get("optional") or {}
+
+    if not required_cfg:
+        # Nothing vendor-specific defined yet -> generic
+        return infer_column_mapping(df, generic_map)
+
+    normalized_to_actual = {c.lower().strip(): c for c in df.columns}
+    mapping: dict[str, str] = {}
+    missing_required: list[str] = []
+
+    # Strict pass for required columns
+    for logical, candidates in required_cfg.items():
+        found = None
+        for cand in candidates:
+            key = cand.lower().strip()
+            if key in normalized_to_actual:
+                found = normalized_to_actual[key]
+                break
+        if found:
+            mapping[logical] = found
+        else:
+            missing_required.append(logical)
+
+    if missing_required:
+        print(
+            f"[WARN] Vendor {vendor_name}: missing required logical columns {missing_required}. "
+            f"Falling back to generic mapping."
+        )
+        return infer_column_mapping(df, generic_map)
+
+    # Optional columns: best-effort
+    for logical, candidates in optional_cfg.items():
+        for cand in candidates:
+            key = cand.lower().strip()
+            if key in normalized_to_actual:
+                mapping[logical] = normalized_to_actual[key]
+                break
+
+    # Let the generic mapping fill any remaining logical keys we didn't set
+    generic_mapping = infer_column_mapping(df, generic_map)
+    for logical, actual in generic_mapping.items():
+        mapping.setdefault(logical, actual)
+
+    return mapping
 
 def detect_vendor(df: pd.DataFrame, signatures: dict[str, list[str]]) -> str | None:
     """
@@ -376,7 +492,7 @@ def reconcile_payroll_vs_recordkeeper():
     rk_file = cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
     MAX_BUSINESS_DAYS_LAG = cfg.get("max_business_days_lag", MAX_BUSINESS_DAYS_LAG)
 
-    # Load raw files
+        # Load raw files
     payroll_df = load_csv(payroll_file)
     rk_df = load_csv(rk_file)
 
@@ -388,10 +504,20 @@ def reconcile_payroll_vs_recordkeeper():
     print(f"Detected payroll vendor:     {payroll_vendor or 'Unknown / Generic'}")
     print(f"Detected recordkeeper:       {rk_vendor or 'Unknown / Generic'}")
 
-    # For now we still use the generic COLUMN_MAP for both sides.
-    # Later we can swap to vendor-specific maps using payroll_vendor / rk_vendor.
-    payroll_cols = infer_column_mapping(payroll_df, COLUMN_MAP)
-    rk_cols = infer_column_mapping(rk_df, COLUMN_MAP)
+    # Vendor-aware mapping: strict for vendor-required fields, flexible elsewhere,
+    # with a clean fallback to the generic COLUMN_MAP.
+    payroll_cols = infer_vendor_mapping(
+        payroll_df,
+        payroll_vendor,
+        PAYROLL_VENDOR_COLUMN_MAPS,
+        COLUMN_MAP,
+    )
+    rk_cols = infer_vendor_mapping(
+        rk_df,
+        rk_vendor,
+        RK_VENDOR_COLUMN_MAPS,
+        COLUMN_MAP,
+    )
 
     print("\n=== Column Mapping (Payroll) ===")
     for k, v in payroll_cols.items():
