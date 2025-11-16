@@ -1,6 +1,8 @@
 from pathlib import Path
+import json
 import pandas as pd
 import numpy as np
+
 
 
 # =========================
@@ -16,6 +18,17 @@ DATA_OUT = Path(__file__).resolve().parents[1] / "data" / "processed"
 
 # Compliance threshold: max allowed business days between pay_date and deposit_date
 MAX_BUSINESS_DAYS_LAG = 5  # adjust per policy if needed
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+CONFIG_NAME = "empower_adp.json"
+
+
+def load_config(config_name: str = CONFIG_NAME) -> dict:
+    path = CONFIG_DIR / config_name
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+    with open(path, "r") as f:
+        return json.load(f)
 
 # Logical column names → candidate physical column names
 # We separate payroll vs RK and deferrals vs loans
@@ -145,6 +158,13 @@ def parse_amount(series: pd.Series) -> pd.Series:
         .fillna(0.0)
     )
 
+def safe_read_csv(path: Path) -> pd.DataFrame | None:
+    """
+    Read a CSV if it exists, otherwise return None.
+    """
+    if path.exists():
+        return pd.read_csv(path)
+    return None
 
 def compute_business_days_lag(df: pd.DataFrame, pay_col: str, dep_col: str) -> pd.Series:
     """
@@ -267,13 +287,19 @@ def reconcile_stream(
 # MAIN ORCHESTRATION
 # =========================
 
-def reconcile_payroll_vs_recordkeeper(
-    payroll_file: str = PAYROLL_FILE,
-    rk_file: str = RECORDKEEPER_FILE,
-):
+def reconcile_payroll_vs_recordkeeper():
+    # Load config and override defaults if present
+    cfg = load_config()
+    global MAX_BUSINESS_DAYS_LAG
+
+    payroll_file = cfg.get("payroll_file", PAYROLL_FILE)
+    rk_file = cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
+    MAX_BUSINESS_DAYS_LAG = cfg.get("max_business_days_lag", MAX_BUSINESS_DAYS_LAG)
+
     # Load raw files
     payroll_df = load_csv(payroll_file)
     rk_df = load_csv(rk_file)
+
 
     # Infer mappings
     payroll_cols = infer_column_mapping(payroll_df, COLUMN_MAP)
@@ -386,10 +412,74 @@ def reconcile_payroll_vs_recordkeeper(
         required_keys=["employee_id", "loan_amount"],
     )
 
+def generate_excel_report():
+    """
+    Build a consolidated Excel report from whatever CSVs exist in data/processed.
+    Sheets:
+      - Summary
+      - Deferrals: mismatches, only-in-payroll, only-in-RK, late
+      - Loans:    mismatches, only-in-payroll, only-in-RK, late
+    """
+    report_path = DATA_OUT / "reconciliation_report.xlsx"
+
+    # Ensure output dir exists
+    DATA_OUT.mkdir(exist_ok=True, parents=True)
+
+    streams = ["deferrals", "loans"]
+    summary_rows = []
+
+    with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+        for stream in streams:
+            base = stream.lower()
+
+            files = {
+                "only_in_payroll": DATA_OUT / f"only_in_payroll_{base}.csv",
+                "only_in_recordkeeper": DATA_OUT / f"only_in_recordkeeper_{base}.csv",
+                "mismatch": DATA_OUT / f"{base}_mismatch.csv",
+                "late": DATA_OUT / f"late_{base}_contributions.csv",
+            }
+
+            for label, path in files.items():
+                df = safe_read_csv(path)
+                sheet_name = f"{stream[:3].title()} - {label.replace('_', ' ').title()}"
+
+                if df is not None and not df.empty:
+                    # Write detailed sheet
+                    df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+
+                    # Add summary row
+                    summary_rows.append(
+                        {
+                            "stream": stream,
+                            "category": label,
+                            "rows": len(df),
+                        }
+                    )
+                else:
+                    # Even if file doesn't exist, still write a tiny placeholder so structure is predictable
+                    placeholder = pd.DataFrame(
+                        [{"info": f"No rows for {stream}/{label} or file missing"}]
+                    )
+                    placeholder.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+                    summary_rows.append(
+                        {
+                            "stream": stream,
+                            "category": label,
+                            "rows": 0,
+                        }
+                    )
+
+        # Summary sheet
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+    print(f"\nConsolidated Excel report written to: {report_path}")
+    print("You can drag this into Google Sheets or email it as-is.")
 
 def main():
     print("Running Prooflink reconciliation for deferrals + loans (with business-day late checks)...")
     reconcile_payroll_vs_recordkeeper()
+    generate_excel_report()
 
 
 if __name__ == "__main__":
