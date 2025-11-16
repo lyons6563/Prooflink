@@ -111,6 +111,67 @@ COLUMN_MAP = {
     ],
 }
 
+# =========================
+# VENDOR SIGNATURES
+# =========================
+
+# Top 5 payroll vendors we care about in v1
+PAYROLL_VENDOR_SIGNATURES = {
+    "ADP": [
+        "ee id",
+        "check date",
+        "ee deferral $",
+    ],
+    "Paychex": [
+        "employee number",
+        "checkdt",
+        "pre-tax",
+    ],
+    "Paylocity": [
+        "employeeid",
+        "check date",
+        "ee pre-tax",
+    ],
+    "Paycor": [
+        "employee id",
+        "pay date",
+        "pre-tax deferral",
+    ],
+    "Workday": [
+        "worker id",
+        "pay group",
+        "pre-tax",
+    ],
+}
+
+# Top 5 recordkeepers we care about in v1
+RK_VENDOR_SIGNATURES = {
+    "Empower": [
+        "trade date",
+        "employee contribution",
+        "roth contribution",
+    ],
+    "Fidelity": [
+        "deposit date",
+        "pre-tax cont",
+        "source",
+    ],
+    "Vanguard": [
+        "trade date",
+        "employee pretax",
+        "employee roth",
+    ],
+    "Principal": [
+        "contribution amt",
+        "source code",
+        "loan payment",
+    ],
+    "Voya": [
+        "contribution type",
+        "fund",
+        "pay date",
+    ],
+}
 
 # =========================
 # CORE UTILITIES
@@ -143,6 +204,25 @@ def infer_column_mapping(df: pd.DataFrame, logical_map: dict[str, list[str]]) ->
 
     return actual
 
+def detect_vendor(df: pd.DataFrame, signatures: dict[str, list[str]]) -> str | None:
+    """
+    Try to detect a vendor by checking if all signature patterns appear
+    in the dataframe's columns (case-insensitive, substring match).
+    Returns the vendor name or None if no match.
+    """
+    cols = [c.lower().strip() for c in df.columns]
+
+    for vendor, patterns in signatures.items():
+        match_all = True
+        for pattern in patterns:
+            pattern = pattern.lower().strip()
+            if not any(pattern in col for col in cols):
+                match_all = False
+                break
+        if match_all:
+            return vendor
+
+    return None
 
 def parse_amount(series: pd.Series) -> pd.Series:
     """
@@ -300,8 +380,16 @@ def reconcile_payroll_vs_recordkeeper():
     payroll_df = load_csv(payroll_file)
     rk_df = load_csv(rk_file)
 
+    # Detect vendors
+    payroll_vendor = detect_vendor(payroll_df, PAYROLL_VENDOR_SIGNATURES)
+    rk_vendor = detect_vendor(rk_df, RK_VENDOR_SIGNATURES)
 
-    # Infer mappings
+    print("\n=== Vendor Detection ===")
+    print(f"Detected payroll vendor:     {payroll_vendor or 'Unknown / Generic'}")
+    print(f"Detected recordkeeper:       {rk_vendor or 'Unknown / Generic'}")
+
+    # For now we still use the generic COLUMN_MAP for both sides.
+    # Later we can swap to vendor-specific maps using payroll_vendor / rk_vendor.
     payroll_cols = infer_column_mapping(payroll_df, COLUMN_MAP)
     rk_cols = infer_column_mapping(rk_df, COLUMN_MAP)
 
