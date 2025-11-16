@@ -20,7 +20,7 @@ DATA_OUT = Path(__file__).resolve().parents[1] / "data" / "processed"
 MAX_BUSINESS_DAYS_LAG = 5  # adjust per policy if needed
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
-CONFIG_NAME = "empower_adp.json"
+CONFIG_NAME = "synthetic_400_adp_empower.json"
 
 
 def load_config(config_name: str = CONFIG_NAME) -> dict:
@@ -361,6 +361,235 @@ def safe_read_csv(path: Path) -> pd.DataFrame | None:
     if path.exists():
         return pd.read_csv(path)
     return None
+def _find_id_column(df: pd.DataFrame) -> str | None:
+    """
+    Try to find an employee/participant id column by common names.
+    """
+    if df is None or df.empty:
+        return None
+
+    candidates = [
+        "employee_id",
+        "empnumber",
+        "ee id",
+        "participant id",
+        "part_id",
+        "ee_id",
+    ]
+    lower_map = {c.lower().strip(): c for c in df.columns}
+    for cand in candidates:
+        if cand in lower_map:
+            return lower_map[cand]
+    # Fallback: any column with 'id' in it
+    for col in df.columns:
+        if "id" in col.lower():
+            return col
+    return None
+
+
+def _find_lag_column(df: pd.DataFrame) -> str | None:
+    """
+    Try to find a lag / business-day difference column.
+    """
+    if df is None or df.empty:
+        return None
+
+    for col in df.columns:
+        name = col.lower()
+        if "lag" in name and "day" in name:
+            return col
+        if "business" in name and "day" in name:
+            return col
+    return None
+def compute_compliance_metrics() -> tuple[list[dict], list[str]]:
+    """
+    Compute high-level compliance metrics from the processed CSVs.
+    Returns:
+      - a list of dicts for writing to Excel
+      - a list of strings for printing to the console
+    """
+    metrics_rows: list[dict] = []
+    console_lines: list[str] = []
+
+    # Load processed CSVs if they exist
+    late_def = safe_read_csv(DATA_OUT / "late_deferrals_contributions.csv")
+    late_loan = safe_read_csv(DATA_OUT / "late_loans_contributions.csv")
+    mis_def = safe_read_csv(DATA_OUT / "deferrals_mismatch.csv")
+    mis_loan = safe_read_csv(DATA_OUT / "loans_mismatch.csv")
+    only_p_def = safe_read_csv(DATA_OUT / "only_in_payroll_deferrals.csv")
+    only_r_def = safe_read_csv(DATA_OUT / "only_in_recordkeeper_deferrals.csv")
+    only_p_loan = safe_read_csv(DATA_OUT / "only_in_payroll_loans.csv")
+    only_r_loan = safe_read_csv(DATA_OUT / "only_in_recordkeeper_loans.csv")
+
+    # Convenience list
+    def _safe_len(df: pd.DataFrame | None) -> int:
+        return 0 if df is None else len(df)
+
+    # Late contributions
+    late_def_rows = _safe_len(late_def)
+    late_loan_rows = _safe_len(late_loan)
+
+    # Unique employees with any late contribution
+    late_emp_ids: set = set()
+    for df in (late_def, late_loan):
+        if df is not None and not df.empty:
+            id_col = _find_id_column(df)
+            if id_col:
+                late_emp_ids.update(df[id_col].dropna().astype(str).unique().tolist())
+
+    # Lag stats
+    max_lag = None
+    avg_lag = None
+    lag_values = []
+    for df in (late_def, late_loan):
+        if df is not None and not df.empty:
+            lag_col = _find_lag_column(df)
+            if lag_col and pd.api.types.is_numeric_dtype(df[lag_col]):
+                lag_values.extend(df[lag_col].dropna().tolist())
+    if lag_values:
+        max_lag = max(lag_values)
+        avg_lag = sum(lag_values) / len(lag_values)
+
+    metrics_rows.append(
+        {
+            "Category": "Late Contributions",
+            "Metric": "Late deferral rows",
+            "Value": late_def_rows,
+            "Notes": "Count of rows flagged as late for deferrals",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Late Contributions",
+            "Metric": "Late loan rows",
+            "Value": late_loan_rows,
+            "Notes": "Count of rows flagged as late for loans",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Late Contributions",
+            "Metric": "Unique employees with any late event",
+            "Value": len(late_emp_ids),
+            "Notes": "Across deferrals and loans",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Late Contributions",
+            "Metric": "Max business-day lag (late rows only)",
+            "Value": max_lag if max_lag is not None else "",
+            "Notes": "",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Late Contributions",
+            "Metric": "Average business-day lag (late rows only)",
+            "Value": round(avg_lag, 2) if avg_lag is not None else "",
+            "Notes": "",
+        }
+    )
+
+    # Mismatches
+    mis_def_rows = _safe_len(mis_def)
+    mis_loan_rows = _safe_len(mis_loan)
+
+    # Unique employees with mismatches
+    mis_emp_ids: set = set()
+    for df in (mis_def, mis_loan):
+        if df is not None and not df.empty:
+            id_col = _find_id_column(df)
+            if id_col:
+                mis_emp_ids.update(df[id_col].dropna().astype(str).unique().tolist())
+
+    metrics_rows.append(
+        {
+            "Category": "Mismatches",
+            "Metric": "Deferral mismatch rows",
+            "Value": mis_def_rows,
+            "Notes": "Rows where payroll vs RK deferral amounts differ",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Mismatches",
+            "Metric": "Loan mismatch rows",
+            "Value": mis_loan_rows,
+            "Notes": "Rows where payroll vs RK loan amounts differ",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Mismatches",
+            "Metric": "Unique employees with any mismatch",
+            "Value": len(mis_emp_ids),
+            "Notes": "",
+        }
+    )
+
+    # Coverage / completeness
+    metrics_rows.append(
+        {
+            "Category": "Coverage",
+            "Metric": "Only-in-payroll deferral rows",
+            "Value": _safe_len(only_p_def),
+            "Notes": "Payroll has row; RK is missing it (deferrals)",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Coverage",
+            "Metric": "Only-in-recordkeeper deferral rows",
+            "Value": _safe_len(only_r_def),
+            "Notes": "RK has row; payroll is missing it (deferrals)",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Coverage",
+            "Metric": "Only-in-payroll loan rows",
+            "Value": _safe_len(only_p_loan),
+            "Notes": "Payroll has row; RK is missing it (loans)",
+        }
+    )
+    metrics_rows.append(
+        {
+            "Category": "Coverage",
+            "Metric": "Only-in-recordkeeper loan rows",
+            "Value": _safe_len(only_r_loan),
+            "Notes": "RK has row; payroll is missing it (loans)",
+        }
+    )
+
+    # Build console summary in "advisor / consultant" tone
+    console_lines.append("=== Compliance Dashboard (High-Level) ===")
+    console_lines.append(
+        f"Late deferral rows: {late_def_rows:,} | Late loan rows: {late_loan_rows:,}"
+    )
+    console_lines.append(
+        f"Employees with any late event: {len(late_emp_ids):,}"
+    )
+    if max_lag is not None and avg_lag is not None:
+        console_lines.append(
+            f"Late funding lag (BD) — max: {max_lag}, average (late only): {avg_lag:.2f}"
+        )
+    console_lines.append(
+        f"Deferral mismatch rows: {mis_def_rows:,} | Loan mismatch rows: {mis_loan_rows:,}"
+    )
+    console_lines.append(
+        f"Employees with any mismatch: {len(mis_emp_ids):,}"
+    )
+    console_lines.append(
+        "Coverage gaps — "
+        f"only-in-payroll (def/loan): "
+        f"{_safe_len(only_p_def):,}/{_safe_len(only_p_loan):,}, "
+        f"only-in-RK (def/loan): "
+        f"{_safe_len(only_r_def):,}/{_safe_len(only_r_loan):,}"
+    )
+
+    return metrics_rows, console_lines
+
 
 def compute_business_days_lag(df: pd.DataFrame, pay_col: str, dep_col: str) -> pd.Series:
     """
@@ -630,9 +859,9 @@ def generate_excel_report():
     """
     Build a consolidated Excel report from whatever CSVs exist in data/processed.
     Sheets:
-      - Summary
-      - Deferrals: mismatches, only-in-payroll, only-in-RK, late
-      - Loans:    mismatches, only-in-payroll, only-in-RK, late
+      - Summary (raw category counts)
+      - Summary_Compliance_Metrics (advisor-style metrics)
+      - Deferrals/Loans detail sheets (mismatches, only-in-*, late, etc.)
     """
     report_path = DATA_OUT / "reconciliation_report.xlsx"
 
@@ -643,6 +872,7 @@ def generate_excel_report():
     summary_rows = []
 
     with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+        # Detail + raw summary rows
         for stream in streams:
             base = stream.lower()
 
@@ -670,7 +900,7 @@ def generate_excel_report():
                         }
                     )
                 else:
-                    # Even if file doesn't exist, still write a tiny placeholder so structure is predictable
+                    # Write placeholder sheet so structure is predictable
                     placeholder = pd.DataFrame(
                         [{"info": f"No rows for {stream}/{label} or file missing"}]
                     )
@@ -683,10 +913,20 @@ def generate_excel_report():
                         }
                     )
 
-        # Summary sheet
+        # Sheet 1: raw summary counts
         summary_df = pd.DataFrame(summary_rows)
         summary_df.to_excel(writer, sheet_name="Summary", index=False)
 
+        # Sheet 2: compliance metrics
+        metrics_rows, _ = compute_compliance_metrics()
+        metrics_df = pd.DataFrame(metrics_rows)
+        metrics_df.to_excel(
+            writer, sheet_name="Summary_Compliance_Metrics", index=False
+        )
+
+    # Console dashboard
+    _, console_lines = compute_compliance_metrics()
+    print("\n" + "\n".join(console_lines))
     print(f"\nConsolidated Excel report written to: {report_path}")
     print("You can drag this into Google Sheets or email it as-is.")
 
