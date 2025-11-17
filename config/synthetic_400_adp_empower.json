@@ -1,0 +1,5 @@
+{
+  "payroll_file": "payroll_adp_synthetic_400.csv",
+  "recordkeeper_file": "rk_empower_synthetic_400.csv",
+  "max_business_days_lag": 5
+}

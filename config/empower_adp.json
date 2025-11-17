@@ -1,0 +1,5 @@
+{
+  "payroll_file": "payroll_soc1_challenge.csv",
+  "recordkeeper_file": "rk_soc1_challenge.csv",
+  "max_business_days_lag": 5
+}
