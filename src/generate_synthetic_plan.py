@@ -3,7 +3,7 @@ import random
 import pandas as pd
 from pandas.tseries.offsets import BusinessDay
 
-
+# Project paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_RAW = PROJECT_ROOT / "data" / "raw"
 DATA_RAW.mkdir(parents=True, exist_ok=True)
@@ -17,14 +17,17 @@ def generate_synthetic_plan(
     rk_filename: str = "rk_empower_synthetic_400.csv",
 ) -> None:
     """
-    Generate a synthetic ADP-style payroll file and Empower-style recordkeeper file
-    for a single plan with multiple payroll periods and 400 employees.
+    Generate a synthetic ADP-style payroll file and Empower-style recordkeeper file.
 
+    - Biweekly payroll for num_periods
+    - 400 employees
     - Pretax, Roth, After-tax, Loan repayments
     - 5% employer match
-    - Business-day lags between payroll run date and deposit (1–7 days)
-    - Random mismatches and missing rows on RK side to simulate real-world noise
+    - Business-day lags between payroll date and deposit (1–10 days)
+    - A small percentage of amount mismatches on RK side
     """
+
+    print("Starting synthetic plan generation...")
 
     start = pd.to_datetime(start_date)
     # Biweekly payroll periods
@@ -43,12 +46,12 @@ def generate_synthetic_plan(
         annual_def_pct = random.choices(
             [0, 3, 5, 6, 8, 10], weights=[0.15, 0.25, 0.30, 0.20, 0.05, 0.05]
         )[0]
-        # Roth usage: some employees also use Roth
+        # Roth usage
         roth_pct = random.choices([0, 2, 4], weights=[0.6, 0.25, 0.15])[0]
-        # After-tax: minority use it
+        # After-tax
         aftertax_pct = random.choices([0, 2], weights=[0.8, 0.2])[0]
 
-        # Loans: maybe 20% have one
+        # Loans: ~20% have one
         has_loan = random.random() < 0.2
         annual_loan_pmt = random.randint(600, 3_600) if has_loan else 0
 
@@ -69,6 +72,9 @@ def generate_synthetic_plan(
             match_cap = gross * 0.05
             match = round(min(match_base, match_cap), 2)
 
+            # -------------------------
+            # Payroll (ADP-style) row
+            # -------------------------
             payroll_rows.append(
                 {
                     "EmpNumber": emp_id,
@@ -83,16 +89,14 @@ def generate_synthetic_plan(
                     "LocationCode": random.choice(["ATL", "SAV", "PHX", "DEN"]),
                     "Is_Offcycle": 0,
                     "Is_Prior_Period_Adj": 0,
-                    # Vesting / cliff could be derived; for now, just a placeholder
                     "Years_of_Service": random.randint(0, 10),
                 }
             )
 
-    
-                    # Simulate RK side – some rows missing, some mismatched (~1% missing)
-        if random.random() < 0.99:  # 1% missing on RK side
-            # Business-day lag distribution: mostly 1–3 days,
-            # some 4–5, rare 6–10 (used for "late" scenarios)
+            # -------------------------
+            # RK (Empower-style) row
+            # -------------------------
+            # Business-day lag distribution
             lag_choice = random.random()
             if lag_choice < 0.70:
                 lag_days = random.choice([1, 2, 3])  # 70% normal
@@ -100,6 +104,7 @@ def generate_synthetic_plan(
                 lag_days = random.choice([4, 5])     # 25% slightly slow
             else:
                 lag_days = random.randint(6, 10)     # 5% truly late
+
             post_date = p_date + BusinessDay(lag_days)
 
             # Simulate mismatches/corrections:
@@ -114,10 +119,6 @@ def generate_synthetic_plan(
             rk_aftertax = round(aftertax * noise_factor, 2)
             rk_loan = round(loan * noise_factor, 2)
 
-            # Occasionally treat something as a prior-period adjustment by shifting date
-            if random.random() < 0.03:
-                post_date = post_date + BusinessDay(7)
-
             rk_rows.append(
                 {
                     "Part_ID": emp_id,
@@ -127,8 +128,8 @@ def generate_synthetic_plan(
                     "EE_AfterTax": rk_aftertax,
                     "Loan_Contr": rk_loan,
                     "ER_Match": match,
-                    "Source_PreTax": "EE PreTax",
-                    "Source_Roth": "EE Roth",
+                    "Source_PreTax": "EE PreTax" if rk_pretax > 0 else "",
+                    "Source_Roth": "EE Roth" if rk_roth > 0 else "",
                     "Source_AfterTax": "EE AfterTax" if rk_aftertax > 0 else "",
                     "Source_Loan": "Loan" if rk_loan > 0 else "",
                     "Fund": random.choice(
@@ -142,7 +143,6 @@ def generate_synthetic_plan(
                     ),
                 }
             )
-
 
     payroll_df = pd.DataFrame(payroll_rows)
     rk_df = pd.DataFrame(rk_rows)
@@ -158,4 +158,6 @@ def generate_synthetic_plan(
 
 
 if __name__ == "__main__":
+    # When you run:  python generate_synthetic_plan.py
+    # this will execute and actually write the files.
     generate_synthetic_plan()

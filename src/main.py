@@ -1,8 +1,310 @@
 from pathlib import Path
+from datetime import datetime
+import hashlib
 import json
-import pandas as pd
 import numpy as np
 
+import pandas as pd
+
+from pathlib import Path
+
+def run_reconciliation(
+    payroll_csv: str,
+    rk_csv: str,
+    payroll_vendor_hint: str | None = None,
+    rk_vendor_hint: str | None = None,
+    output_dir: str = "data/processed",
+    proofs_dir: str = "proofs",
+) -> dict:
+    """
+    Wrap the full ProofLink process so both Streamlit and CLI can call it.
+    """
+
+    output_dir_path = Path(output_dir)
+    proofs_dir_path = Path(proofs_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    proofs_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # 🔴 TODO: MOVE YOUR EXISTING PIPELINE LOGIC INTO HERE.
+    # Wherever you currently:
+    #  - detect vendors
+    #  - normalize columns
+    #  - run deferral + loan reconciliation
+    #  - write CSV outputs to data/processed
+    #  - create reconciliation_report.xlsx
+    #  - create proof_manifest_*.json in proofs/
+    #
+    # take that code and INDENT it under this function.
+
+    # For now, this returns the standard file paths the UI will expose.
+    # Adjust names if your files are slightly different.
+    return {
+        "reconciliation_report": str(output_dir_path / "reconciliation_report.xlsx"),
+        "deferral_mismatches": str(output_dir_path / "deferral_mismatches.csv"),
+        "loan_mismatches": str(output_dir_path / "loan_mismatches.csv"),
+        "only_in_payroll": str(output_dir_path / "only_in_payroll_deferrals.csv"),
+        "only_in_recordkeeper": str(output_dir_path / "only_in_recordkeeper_deferrals.csv"),
+        "late_deferrals": str(output_dir_path / "late_deferrals_contributions.csv"),
+        "late_loans": str(output_dir_path / "late_loans_contributions.csv"),
+        # later we can add:
+        # "manifest": str(proofs_dir_path / "proof_manifest_XXXX.json"),
+    }
+
+from pathlib import Path
+
+from pathlib import Path
+from datetime import datetime
+import hashlib
+import json
+import numpy as np
+
+import pandas as pd
+
+def run_reconciliation(
+    payroll_csv: str,
+    rk_csv: str,
+    payroll_vendor_hint: str | None = None,
+    rk_vendor_hint: str | None = None,
+    output_dir: str = "data/processed",
+    proofs_dir: str = "proofs",
+) -> dict:
+    """
+    Execute a full ProofLink reconciliation run for the given payroll + RK CSVs.
+
+    This is the function Streamlit should call.
+
+    It will:
+      - clear/overwrite previous CSV/XLSX outputs in output_dir
+      - run deferral + loan reconciliation using the two provided CSV files
+      - generate reconciliation_report.xlsx
+      - generate a new proof_manifest_*.json in proofs_dir
+      - return a dict of paths for the UI
+    """
+
+    # Resolve and prepare directories
+    output_dir_path = Path(output_dir)
+    proofs_dir_path = Path(proofs_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    proofs_dir_path.mkdir(parents=True, exist_ok=True)
+
+    # Point the rest of the module at these dirs
+    global DATA_OUT, PROOFS_DIR, MAX_BUSINESS_DAYS_LAG
+    DATA_OUT = output_dir_path
+    PROOFS_DIR = proofs_dir_path
+
+    # Clean previous outputs so metrics are based ONLY on this run
+    for pattern in ("*.csv", "*.xlsx"):
+        for p in output_dir_path.glob(pattern):
+            try:
+                p.unlink()
+            except Exception as e:
+                print(f"[WARN] Could not delete old output {p}: {e}")
+
+    # Load config ONLY for things like business-day threshold (ignore file names)
+    try:
+        cfg = load_config()
+        MAX_BUSINESS_DAYS_LAG = cfg.get("max_business_days_lag", MAX_BUSINESS_DAYS_LAG)
+    except FileNotFoundError:
+        cfg = {}
+        print("[INFO] No config file found; using defaults for lag threshold.")
+
+    # Resolve and validate input paths
+    payroll_path = Path(payroll_csv)
+    rk_path = Path(rk_csv)
+
+    if not payroll_path.exists():
+        raise FileNotFoundError(f"Payroll CSV not found: {payroll_path}")
+    if not rk_path.exists():
+        raise FileNotFoundError(f"Recordkeeper CSV not found: {rk_path}")
+
+    # Load raw files DIRECTLY from the given paths
+    payroll_df = pd.read_csv(payroll_path)
+    rk_df = pd.read_csv(rk_path)
+
+    # =========================
+    # Vendor detection
+    # =========================
+    if payroll_vendor_hint:
+        payroll_vendor = payroll_vendor_hint
+    else:
+        payroll_vendor = detect_vendor(payroll_df, PAYROLL_VENDOR_SIGNATURES)
+
+    if rk_vendor_hint:
+        rk_vendor = rk_vendor_hint
+    else:
+        rk_vendor = detect_vendor(rk_df, RK_VENDOR_SIGNATURES)
+
+    print("\n=== Vendor Detection ===")
+    print(f"Detected payroll vendor:     {payroll_vendor or 'Unknown / Generic'}")
+    print(f"Detected recordkeeper:       {rk_vendor or 'Unknown / Generic'}")
+
+    # =========================
+    # Column mapping
+    # =========================
+    payroll_cols = infer_vendor_mapping(
+        payroll_df,
+        payroll_vendor,
+        PAYROLL_VENDOR_COLUMN_MAPS,
+        COLUMN_MAP,
+    )
+    rk_cols = infer_vendor_mapping(
+        rk_df,
+        rk_vendor,
+        RK_VENDOR_COLUMN_MAPS,
+        COLUMN_MAP,
+    )
+
+    print("\n=== Column Mapping (Payroll) ===")
+    for k, v in payroll_cols.items():
+        print(f"  {k} -> {v}")
+    print("\n=== Column Mapping (Recordkeeper) ===")
+    for k, v in rk_cols.items():
+        print(f"  {k} -> {v}")
+
+    # Guardrails
+    if "employee_id" not in payroll_cols or "employee_id" not in rk_cols:
+        raise ValueError(
+            f"Cannot proceed: employee_id not found on both sides. "
+            f"Payroll columns: {list(payroll_df.columns)}, RK columns: {list(rk_df.columns)}"
+        )
+
+    if "pay_date" not in payroll_cols:
+        print("[WARN] No pay_date mapped on payroll file; late logic will be limited.")
+    if "deposit_date" not in rk_cols:
+        print("[WARN] No deposit_date mapped on recordkeeper file; late logic will be limited.")
+
+    # =========================
+    # Build derived columns for deferrals + loans
+    # =========================
+    p = payroll_df.copy()
+    r = rk_df.copy()
+
+    # DEFERRALS – payroll side
+    if (
+        "payroll_pretax" in payroll_cols
+        or "payroll_roth" in payroll_cols
+        or "amount" in payroll_cols
+    ):
+        pretax = (
+            parse_amount(p[payroll_cols["payroll_pretax"]])
+            if "payroll_pretax" in payroll_cols
+            else 0.0
+        )
+        roth = (
+            parse_amount(p[payroll_cols["payroll_roth"]])
+            if "payroll_roth" in payroll_cols
+            else 0.0
+        )
+
+        # fallback: single-amount column
+        if (
+            "payroll_pretax" not in payroll_cols
+            and "payroll_roth" not in payroll_cols
+            and "amount" in payroll_cols
+        ):
+            pretax = parse_amount(p[payroll_cols["amount"]])
+            roth = 0.0
+
+        p["deferral_amount"] = pretax + roth
+
+    # DEFERRALS – RK side
+    if (
+        "rk_pretax" in rk_cols
+        or "rk_roth" in rk_cols
+        or "amount" in rk_cols
+    ):
+        pretax_rk = (
+            parse_amount(r[rk_cols["rk_pretax"]])
+            if "rk_pretax" in rk_cols
+            else 0.0
+        )
+        roth_rk = (
+            parse_amount(r[rk_cols["rk_roth"]])
+            if "rk_roth" in rk_cols
+            else 0.0
+        )
+
+        if (
+            "rk_pretax" not in rk_cols
+            and "rk_roth" not in rk_cols
+            and "amount" in rk_cols
+        ):
+            pretax_rk = parse_amount(r[rk_cols["amount"]])
+            roth_rk = 0.0
+
+        r["deferral_amount"] = pretax_rk + roth_rk
+
+    # LOANS
+    if "payroll_loan" in payroll_cols:
+        p["loan_amount"] = parse_amount(p[payroll_cols["payroll_loan"]])
+    if "rk_loan" in rk_cols:
+        r["loan_amount"] = parse_amount(r[rk_cols["rk_loan"]])
+
+    # Extended logical mappings
+    payroll_cols_ext = payroll_cols.copy()
+    rk_cols_ext = rk_cols.copy()
+
+    if "deferral_amount" in p.columns:
+        payroll_cols_ext["def_amount"] = "deferral_amount"
+    if "deferral_amount" in r.columns:
+        rk_cols_ext["def_amount"] = "deferral_amount"
+
+    if "loan_amount" in p.columns:
+        payroll_cols_ext["loan_amount"] = "loan_amount"
+    if "loan_amount" in r.columns:
+        rk_cols_ext["loan_amount"] = "loan_amount"
+
+    # =========================
+    # Run reconciliations
+    # =========================
+    reconcile_stream(
+        stream_name="deferrals",
+        payroll_df=p,
+        rk_df=r,
+        payroll_cols=payroll_cols_ext,
+        rk_cols=rk_cols_ext,
+        required_keys=["employee_id", "def_amount"],
+    )
+
+    reconcile_stream(
+        stream_name="loans",
+        payroll_df=p,
+        rk_df=r,
+        payroll_cols=payroll_cols_ext,
+        rk_cols=rk_cols_ext,
+        required_keys=["employee_id", "loan_amount"],
+    )
+
+    # =========================
+    # Excel report + proof manifest
+    # =========================
+    outputs = generate_excel_report()
+    manifest_path = write_proof_manifest(
+        payroll_file=payroll_path,
+        rk_file=rk_path,
+        cfg=cfg,
+        outputs=outputs,
+    )
+
+    # =========================
+    # Return paths for Streamlit
+    # =========================
+    results = {
+        "reconciliation_report": str(output_dir_path / "reconciliation_report.xlsx"),
+        "deferral_mismatches": str(output_dir_path / "deferral_mismatches.csv"),
+        "loan_mismatches": str(output_dir_path / "loan_mismatches.csv"),
+        "only_in_payroll": str(output_dir_path / "only_in_payroll_deferrals.csv"),
+        "only_in_recordkeeper": str(output_dir_path / "only_in_recordkeeper_deferrals.csv"),
+        "late_deferrals": str(output_dir_path / "late_deferrals_contributions.csv"),
+        "late_loans": str(output_dir_path / "late_loans_contributions.csv"),
+        "manifest": str(manifest_path),
+    }
+
+    print("\nRun complete. Key outputs:")
+    for k, v in results.items():
+        print(f"  {k}: {v}")
+
+    return results
 
 
 # =========================
@@ -22,6 +324,9 @@ MAX_BUSINESS_DAYS_LAG = 5  # adjust per policy if needed
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 CONFIG_NAME = "synthetic_400_adp_empower.json"
 
+PROOFS_DIR = Path(__file__).resolve().parents[1] / "proofs"
+PROOFS_DIR.mkdir(exist_ok=True)
+
 
 def load_config(config_name: str = CONFIG_NAME) -> dict:
     path = CONFIG_DIR / config_name
@@ -29,6 +334,113 @@ def load_config(config_name: str = CONFIG_NAME) -> dict:
         raise FileNotFoundError(f"Config file not found: {path}")
     with open(path, "r") as f:
         return json.load(f)
+# ============================================================
+# Hashing + Merkle helper functions
+# ============================================================
+
+def sha256_file(path: Path) -> str:
+    """Compute SHA-256 hash of an entire file (binary)."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def sha256_string(s: str) -> str:
+    """SHA-256 of a string, for Merkle layers."""
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def merkle_root(hashes: list[str]) -> str:
+    """
+    Build a simple Merkle root from a list of hex hashes.
+    If list is empty, return empty string.
+    If odd count, last hash is duplicated at that layer.
+    """
+    if not hashes:
+        return ""
+    layer = hashes[:]
+    while len(layer) > 1:
+        next_layer = []
+        for i in range(0, len(layer), 2):
+            left = layer[i]
+            right = layer[i + 1] if i + 1 < len(layer) else layer[i]
+            combined = sha256_string(left + right)
+            next_layer.append(combined)
+        layer = next_layer
+    return layer[0]
+
+
+def hash_csv_rows(path: Path, max_samples: int = 5) -> dict:
+    """
+    Compute row-level hashes and a Merkle root for a CSV.
+    Normalizes rows by sorted column order.
+    Returns summary metadata, not all row hashes.
+    """
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:
+        return {
+            "row_count": 0,
+            "error": f"Failed to read CSV: {e}",
+            "merkle_root": "",
+            "row_hash_sample": [],
+        }
+
+    col_names = sorted(df.columns.tolist())
+    row_hashes: list[str] = []
+
+    for _, row in df.iterrows():
+        parts = []
+        for col in col_names:
+            val = row[col]
+            parts.append(f"{col}={val}")
+        row_str = "|".join(parts)
+        row_hashes.append(sha256_string(row_str))
+
+    root = merkle_root(row_hashes)
+    sample = row_hashes[:max_samples]
+
+    return {
+        "row_count": int(len(df)),
+        "columns": col_names,
+        "merkle_root": root,
+        "row_hash_sample": sample,
+    }
+def write_proof_manifest(
+    payroll_file: Path,
+    rk_file: Path,
+    cfg: dict,
+    outputs: dict,
+) -> Path:
+    """
+    Write a JSON manifest that ties this run to:
+      - the payroll and recordkeeper input files
+      - the config used
+      - the hashed outputs (CSVs/XLSX)
+    """
+    from datetime import datetime, timezone
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+    manifest = {
+        "run_timestamp_utc": timestamp,
+        "payroll_file": str(payroll_file),
+        "recordkeeper_file": str(rk_file),
+        "config_name": CONFIG_NAME,
+        "outputs": outputs,
+    }
+
+    out_name = f"proof_manifest_{timestamp.replace(':', '').replace('-', '')}.json"
+    out_path = PROOFS_DIR / out_name
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"Proof manifest written to: {out_path}")
+    return out_path
 
 # Logical column names → candidate physical column names
 # We separate payroll vs RK and deferrals vs loans
@@ -41,7 +453,9 @@ COLUMN_MAP = {
         "emp id",
         "empid",
         "empnumber",
+        "employee_number",   # NEW: handles 'employee_number'
         "participant id",
+        "participant_id",    # NEW: handles 'participant_id'
         "participant",
         "part_id",
     ],
@@ -52,6 +466,7 @@ COLUMN_MAP = {
         "pay date",
         "payroll date",
         "check date",
+        "checkdt",           # NEW: handles 'checkdt'
         "payroll_run_date",
         "pay period end date",
         "pay period date",
@@ -73,12 +488,15 @@ COLUMN_MAP = {
         "pretax_defl",
         "ee deferral $",
         "employee contribution",
+        "pre-tax",           # NEW: handles generic 'pre-tax'
+        "pre tax",
         "amount",
     ],
     "payroll_roth": [
         "roth_defl",
         "ee roth $",
         "roth contribution",
+        "roth",              # NEW: handles generic 'roth'
     ],
     "payroll_loan": [
         "loan_pmt",
@@ -90,11 +508,16 @@ COLUMN_MAP = {
     "rk_pretax": [
         "ee_pretax",
         "employee contribution",
+        "pre-tax cont",      # NEW: handles 'pre-tax cont'
+        "pre tax cont",
+        "pre-tax",           # NEW: generic catch-all
         "amount",
     ],
     "rk_roth": [
         "ee_roth",
         "roth contribution",
+        "roth cont",         # NEW: handles 'roth cont'
+        "roth",
     ],
     "rk_loan": [
         "loan_contr",
@@ -108,8 +531,11 @@ COLUMN_MAP = {
         "ee deferral $",
         "deposit amount",
         "employee contribution",
+        "pre-tax cont",      # NEW: fallback if nothing else hits
+        "roth cont",
     ],
 }
+
 
 # =========================
 # VENDOR SIGNATURES
@@ -414,8 +840,8 @@ def compute_compliance_metrics() -> tuple[list[dict], list[str]]:
     # Load processed CSVs if they exist
     late_def = safe_read_csv(DATA_OUT / "late_deferrals_contributions.csv")
     late_loan = safe_read_csv(DATA_OUT / "late_loans_contributions.csv")
-    mis_def = safe_read_csv(DATA_OUT / "deferrals_mismatch.csv")
-    mis_loan = safe_read_csv(DATA_OUT / "loans_mismatch.csv")
+    mis_def = safe_read_csv(DATA_OUT / "deferral_mismatches.csv")
+    mis_loan = safe_read_csv(DATA_OUT / "loan_mismatches.csv")
     only_p_def = safe_read_csv(DATA_OUT / "only_in_payroll_deferrals.csv")
     only_r_def = safe_read_csv(DATA_OUT / "only_in_recordkeeper_deferrals.csv")
     only_p_loan = safe_read_csv(DATA_OUT / "only_in_payroll_loans.csv")
@@ -562,7 +988,7 @@ def compute_compliance_metrics() -> tuple[list[dict], list[str]]:
         }
     )
 
-    # Build console summary in "advisor / consultant" tone
+    # Console summary
     console_lines.append("=== Compliance Dashboard (High-Level) ===")
     console_lines.append(
         f"Late deferral rows: {late_def_rows:,} | Late loan rows: {late_loan_rows:,}"
@@ -589,6 +1015,7 @@ def compute_compliance_metrics() -> tuple[list[dict], list[str]]:
     )
 
     return metrics_rows, console_lines
+
 
 
 def compute_business_days_lag(df: pd.DataFrame, pay_col: str, dep_col: str) -> pd.Series:
@@ -681,10 +1108,19 @@ def reconcile_stream(
         base = stream_name.lower()
         only_in_payroll.to_csv(DATA_OUT / f"only_in_payroll_{base}.csv", index=False)
         only_in_rk.to_csv(DATA_OUT / f"only_in_recordkeeper_{base}.csv", index=False)
-        amount_mismatch.to_csv(DATA_OUT / f"{base}_mismatch.csv", index=False)
+
+        # 🔐 Standardize mismatch filenames to what the manifest + verifier expect
+        if base == "deferrals":
+            mismatch_filename = "deferral_mismatches.csv"
+        elif base == "loans":
+            mismatch_filename = "loan_mismatches.csv"
+        else:
+            mismatch_filename = f"{base}_mismatch.csv"
+
+        amount_mismatch.to_csv(DATA_OUT / mismatch_filename, index=False)
+
     # Late funding detection if dates are present
     if "pay_date" in merged.columns and "deposit_date" in merged.columns:
-        # We already have pay_date and deposit_date columns on the merged frame
         lag = compute_business_days_lag(merged, "pay_date", "deposit_date")
         merged["business_days_lag"] = lag
 
@@ -692,7 +1128,7 @@ def reconcile_stream(
         late_df = merged[late_mask].copy()
 
         if not late_df.empty:
-            late_path = DATA_OUT / f"late_{base}_contributions.csv"
+            late_path = DATA_OUT / f"late_{stream_name.lower()}_contributions.csv"
             late_df.to_csv(late_path, index=False)
             print(
                 f"Late {stream_name} contributions: {len(late_df)} rows "
@@ -705,7 +1141,6 @@ def reconcile_stream(
             )
     else:
         print(f"No usable dates for late {stream_name} detection.")
-
 
 
 # =========================
@@ -721,7 +1156,7 @@ def reconcile_payroll_vs_recordkeeper():
     rk_file = cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
     MAX_BUSINESS_DAYS_LAG = cfg.get("max_business_days_lag", MAX_BUSINESS_DAYS_LAG)
 
-        # Load raw files
+    # Load raw files
     payroll_df = load_csv(payroll_file)
     rk_df = load_csv(rk_file)
 
@@ -855,6 +1290,8 @@ def reconcile_payroll_vs_recordkeeper():
         required_keys=["employee_id", "loan_amount"],
     )
 
+
+    
 def generate_excel_report():
     """
     Build a consolidated Excel report from whatever CSVs exist in data/processed.
@@ -869,18 +1306,26 @@ def generate_excel_report():
     DATA_OUT.mkdir(exist_ok=True, parents=True)
 
     streams = ["deferrals", "loans"]
-    summary_rows = []
+    summary_rows: list[dict] = []
 
     with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
         # Detail + raw summary rows
         for stream in streams:
             base = stream.lower()
 
+            # Align mismatch filenames with what reconcile_stream writes
+            if base == "deferrals":
+                mismatch_file = DATA_OUT / "deferral_mismatches.csv"
+            elif base == "loans":
+                mismatch_file = DATA_OUT / "loan_mismatches.csv"
+            else:
+                mismatch_file = DATA_OUT / f"{base}_mismatch.csv"
+
             files = {
-                "only_in_payroll": DATA_OUT / f"only_in_payroll_{base}.csv",
+                "only_in_payroll":      DATA_OUT / f"only_in_payroll_{base}.csv",
                 "only_in_recordkeeper": DATA_OUT / f"only_in_recordkeeper_{base}.csv",
-                "mismatch": DATA_OUT / f"{base}_mismatch.csv",
-                "late": DATA_OUT / f"late_{base}_contributions.csv",
+                "mismatch":             mismatch_file,
+                "late":                 DATA_OUT / f"late_{base}_contributions.csv",
             }
 
             for label, path in files.items():
@@ -930,11 +1375,69 @@ def generate_excel_report():
     print(f"\nConsolidated Excel report written to: {report_path}")
     print("You can drag this into Google Sheets or email it as-is.")
 
+    # ====================================================
+    # Build outputs map for proof manifest
+    # ====================================================
+    outputs: dict = {}
+
+    def add_output(logical_name: str, filename: str):
+        path = DATA_OUT / filename
+        if path.exists():
+            entry = {
+                "path": str(path),
+                "sha256": sha256_file(path),
+            }
+            if path.suffix == ".csv":
+                entry.update(hash_csv_rows(path))
+            outputs[logical_name] = entry
+        else:
+            outputs[logical_name] = {"missing": True}
+
+    add_output("deferral_mismatches", "deferral_mismatches.csv")
+    add_output("loan_mismatches", "loan_mismatches.csv")
+    add_output("late_deferrals", "late_deferrals_contributions.csv")
+    add_output("late_loans", "late_loans_contributions.csv")
+    add_output("excel_report", "reconciliation_report.xlsx")
+
+    return outputs
+
 def main():
-    print("Running Prooflink reconciliation for deferrals + loans (with business-day late checks)...")
+    print("Running Prooflink reconciliation...")
     reconcile_payroll_vs_recordkeeper()
-    generate_excel_report()
+    outputs = generate_excel_report()
+    cfg = load_config()
+
+    payroll_path = DATA_RAW / cfg.get("payroll_file", PAYROLL_FILE)
+    rk_path = DATA_RAW / cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
+
+    write_proof_manifest(
+        payroll_file=payroll_path,
+        rk_file=rk_path,
+        cfg=cfg,
+        outputs=outputs,
+    )
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--payroll_csv", required=True)
+    parser.add_argument("--rk_csv", required=True)
+    parser.add_argument("--output_dir", default="data/processed")
+    parser.add_argument("--proofs_dir", default="proofs")
+    args = parser.parse_args()
+
+    run_reconciliation(
+        payroll_csv=args.payroll_csv,
+        rk_csv=args.rk_csv,
+        output_dir=args.output_dir,
+        proofs_dir=args.proofs_dir,
+    )
+
+
     main()
+
+
+    
+
