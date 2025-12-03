@@ -1,0 +1,96 @@
+{
+  "run_timestamp_utc": "2025-11-28T17:24:39+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\inputs\\payroll_payroll_realistic.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\inputs\\rk_rk_realistic.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\deferral_mismatches.csv",
+      "sha256": "0071688a4fccb80e9faf1b4607a9f8d2cfa6766eafe7d00c0540381bfba3f489",
+      "row_count": 355,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "delta",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "02941c39fdf16683ba0b4dcfd8205dfc92c9f6abf6b82b6603567d5ae8f6c3ff",
+      "row_hash_sample": [
+        "5a713c9799067c33c1cac1efefde7272e7d057152e2cf24d550ebfbdae3caef6",
+        "50748076516dd4547f6ec98b5f89a8f45e87b7a64ea8a31555d02264c63e6d97",
+        "f166cd71dfb5faa7b5a59cb1a59b8a3204882b7a692995991c79da91acb327de",
+        "17605dda7df7e025313fcc44dfc30454d6a4c25a64e838e7642e4e565743a850",
+        "30e374f4857e948bab9b74556f90ae166d826873cff43951a45868424ed7b73d"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\loan_mismatches.csv",
+      "sha256": "db589bbb8f6368196e9a2fc408739643940ae3df95b617f90a49567ba9820e8c",
+      "row_count": 3,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "delta",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "9f49aa0305709021e55cb9900e0c18d9e780f272c0982afa540d8c1a2082c367",
+      "row_hash_sample": [
+        "ef9116aa049553de7d752909e974157523c09822a5dfc242fb668d537991b16e",
+        "2e454e1de683d1caaae8c212d8281922dfe520c399203b623a35ba900943cdee",
+        "b3293255de4da91b674824a4004ac58b06885a4af078eca42665116375f3843e"
+      ]
+    },
+    "late_deferrals": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\late_deferrals_contributions.csv",
+      "sha256": "94c17580f38b8d7d700130d61ad36093028bf02e9530af7b5cb5c41eec705559",
+      "row_count": 4,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "6afde8a575462102fe5016f91151b97dc7d1f3868a3f1211321726d4305cad4c",
+      "row_hash_sample": [
+        "8e8bfc6661ab65492174f326e6762862fca6131cd6e54624a6ed9fd78a015d44",
+        "489be93f923826c42a15a168168a8cc0c16b8b2d3a123ae90ff241e1704d5991",
+        "04d173feae2d74de42127159753f4538108e5ec44db7134a353549d099243bbb",
+        "77cc201f4a5dedd546c49fec05e8d81d892410d70502d23d2bcd0f620bda2e64"
+      ]
+    },
+    "late_loans": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\late_loans_contributions.csv",
+      "sha256": "b23086711900b5236b643f287588f255a097488eb2f8bf35057b9d512e15c4f4",
+      "row_count": 4,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "bd798c16d7d9e5b3be6715a1dac25f579ea04cd2f434128a93967bd10d27f359",
+      "row_hash_sample": [
+        "738392a9ffb2cc8ded0f05e1e5e329398d253cfdfb7f1a7671ee8587185cfc08",
+        "3ac304b0fcad08d3886afc033f1d2bc31ef6633fd6cfbe01cfa3c7d202a0e619",
+        "7e0e4738db02421f5d4fe162cbea6e84cea4b23c1a982a96044777a2d404a646",
+        "e51f077fe75a76ba821ab872520225333239ebdbcc461f2c7bb4fb2bb180174e"
+      ]
+    },
+    "excel_report": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\run_20251128_122439\\reconciliation_report.xlsx",
+      "sha256": "bec32bb5a53fddb8829243c5ff6791d30ab9f471079a1704b846066b4096e06c"
+    }
+  }
+}
