@@ -14,6 +14,37 @@ import json
 from main import RunSummary, run_reconciliation_with_summary
 
 
+def check_password():
+    """Simple password gate using Streamlit secrets."""
+    def password_entered():
+        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.text_input(
+            "Enter access password",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+        return False
+
+    if not st.session_state["password_correct"]:
+        st.text_input(
+            "Enter access password",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+        st.error("Incorrect password.")
+        return False
+
+    return True
+
+
 # ---------- Paths / Directories ----------
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
@@ -27,6 +58,9 @@ PROOFS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------- Page Config ----------
 st.set_page_config(page_title="ProofLink", layout="wide")
+
+if not check_password():
+    st.stop()
 
 
 # ==============================
