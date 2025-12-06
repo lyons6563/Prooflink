@@ -15,3 +15,6 @@ venv/
 
 # Proof artifacts (not source)
 proofs/*.json
+
+RECONCILIATION_FUNCTIONS_ANALYSIS.md
+REFACTORING_SUMMARY.md
