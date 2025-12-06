@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 from pathlib import Path
 from datetime import datetime
@@ -884,6 +885,22 @@ def run_timing_analysis(payroll_path: Path,
     print(f"Timing Risk:                  {timing_risk}")
     print()
     print(f"Late-contribution detail CSV written to: {late_path}")
+    
+    # Create summary dict
+    summary_data = {
+        "total_rows": total_rows,
+        "late_rows": num_late,
+        "missing_deposits": num_missing,
+        "risk_level": timing_risk,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "source_hash": None,
+    }
+    
+    # Write timing_summary.json
+    summary_path = output_dir / "timing_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary_data, f, indent=4)
+    print(f"Timing summary JSON written to: {summary_path}")
 
 
 def parse_args() -> argparse.Namespace:
