@@ -780,14 +780,40 @@ def compute_late_contributions(payroll_df: pd.DataFrame,
 # CLI orchestration
 # ==============================
 
-def run_timing_analysis(payroll_path: Path,
-                        rk_path: Path,
-                        output_dir: Path,
-                        late_threshold_days: int = 5) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def run_timing_analysis(
+    payroll_path: str,
+    rk_path: str,
+    output_dir: str,
+    late_threshold_days: int = 5,
+) -> dict:
+    """
+    Programmatic entrypoint for contribution timing analysis.
 
-    raw_payroll = load_table(payroll_path)
-    raw_rk = load_table(rk_path)
+    Args:
+        payroll_path: Path to the payroll CSV.
+        rk_path: Path to the recordkeeper CSV.
+        output_dir: Directory to write outputs (CSV + JSON).
+        late_threshold_days: Secure 2.0 timing threshold in days.
+
+    Returns:
+        A dict summary containing at least:
+            {
+                "total_rows": int,
+                "late_rows": int,
+                "missing_deposits": int,
+                "timing_risk": str,
+                "late_contributions_path": str,
+                "timing_summary_path": str,
+            }
+    """
+    # Convert string paths to Path objects
+    payroll_path_obj = Path(payroll_path)
+    rk_path_obj = Path(rk_path)
+    output_dir_obj = Path(output_dir)
+    output_dir_obj.mkdir(parents=True, exist_ok=True)
+
+    raw_payroll = load_table(payroll_path_obj)
+    raw_rk = load_table(rk_path_obj)
     
     # Normalize column names first (handles flexible deferral/roth variants)
     raw_payroll = normalize_column_names(raw_payroll)
@@ -847,7 +873,7 @@ def run_timing_analysis(payroll_path: Path,
 
     late_rows = result[(result["is_late"]) | (result["missing_deposit"])].copy()
 
-    late_path = output_dir / "late_contributions.csv"
+    late_path = output_dir_obj / "late_contributions.csv"
     late_rows.to_csv(late_path, index=False)
 
     # Compute core counts for timing risk
@@ -897,10 +923,20 @@ def run_timing_analysis(payroll_path: Path,
     }
     
     # Write timing_summary.json
-    summary_path = output_dir / "timing_summary.json"
+    summary_path = output_dir_obj / "timing_summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary_data, f, indent=4)
     print(f"Timing summary JSON written to: {summary_path}")
+    
+    # Return summary dict for programmatic use
+    return {
+        "total_rows": total_rows,
+        "late_rows": num_late,
+        "missing_deposits": num_missing,
+        "timing_risk": timing_risk,
+        "late_contributions_path": str(late_path),
+        "timing_summary_path": str(summary_path),
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -953,11 +989,11 @@ def resolve_default_paths(payroll_arg: str | None,
 def main():
     args = parse_args()
     payroll_path, rk_path = resolve_default_paths(args.payroll, args.recordkeeper)
-    output_dir = Path(args.output_dir)
+    output_dir = args.output_dir
 
     run_timing_analysis(
-        payroll_path=payroll_path,
-        rk_path=rk_path,
+        payroll_path=str(payroll_path),
+        rk_path=str(rk_path),
         output_dir=output_dir,
         late_threshold_days=args.late_threshold,
     )
