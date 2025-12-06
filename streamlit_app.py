@@ -228,15 +228,25 @@ def load_run_history() -> list[dict]:
     return runs
 
 
-def compute_run_risk_level(summary: RunSummary) -> tuple[str, str]:
+def compute_run_risk_level(summary: RunSummary, results_dict: dict = None) -> tuple[str, str]:
     """
-    Return (label, color) based on mismatch/late counts.
+    Return (label, color) based on mismatch/late counts and coverage gaps.
     
     Rules:
     - Low: all counts == 0
     - Medium: total issues between 1 and 20
-    - High: total issues > 20
+    - High: total issues > 20 OR coverage gaps > 0
     """
+    # Check for coverage gaps first (forces High risk if present)
+    if results_dict:
+        mismatches = results_dict.get("mismatches", {})
+        only_in_payroll = mismatches.get("only_in_payroll_count", 0)
+        only_in_rk = mismatches.get("only_in_recordkeeper_count", 0)
+        coverage_gaps = only_in_payroll + only_in_rk
+        
+        if coverage_gaps > 0:
+            return ("High", "red")
+    
     total_issues = (
         summary.deferral_mismatch_count 
         + summary.loan_mismatch_count 
@@ -409,7 +419,7 @@ def run_prooflink_analysis(payroll_file, rk_file, output_dir: Path = None, late_
 
         # Build CLI command
         cmd = [
-            "python", str(BASE_DIR / "contribution_timing_analyzer_v2.py"),
+            sys.executable, str(BASE_DIR / "contribution_timing_analyzer_v2.py"),
             str(payroll_temp_path),
             str(rk_temp_path),
             "--late-threshold", str(late_threshold),
@@ -892,6 +902,12 @@ def render_reconciliation_tab():
             summary: RunSummary = results["summary"]
             results_dict = results.get("results_dict", {})
             
+            # Extract coverage gap counts from results_dict
+            mismatches = results_dict.get("mismatches", {}) or {}
+            only_in_payroll = int(mismatches.get("only_in_payroll_count", 0) or 0)
+            only_in_rk = int(mismatches.get("only_in_recordkeeper_count", 0) or 0)
+            coverage_gaps = only_in_payroll + only_in_rk
+            
             # Parse stdout for additional metrics
             parsed_metrics = parse_reconciliation_output(stdout)
             
@@ -917,8 +933,27 @@ def render_reconciliation_tab():
             if all_totals_zero and missing_columns_detected:
                 st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
             else:
-                label, color = compute_run_risk_level(summary)
-                st.markdown(f"**Run Risk Level:** :{color}_circle: {label}")
+                # Compute existing risk level (without coverage gap override in the function)
+                existing_label, _ = compute_run_risk_level(summary, None)
+                effective_risk_level = existing_label
+                if coverage_gaps > 0:
+                    effective_risk_level = "High"
+                
+                # Map to risk badge with specific emoji format
+                if effective_risk_level.lower() == "high":
+                    risk_badge = ":red_circle: High"
+                elif effective_risk_level.lower() == "medium":
+                    risk_badge = ":large_orange_circle: Medium"
+                else:
+                    risk_badge = ":green_circle: Low"
+                
+                st.markdown(f"**Run Risk Level:** {risk_badge}")
+                
+                if coverage_gaps > 0:
+                    st.warning(
+                        f"Coverage gaps detected: {only_in_payroll} payroll-only rows, "
+                        f"{only_in_rk} recordkeeper-only rows. This is a high-risk data quality issue."
+                    )
             
             st.divider()
             
@@ -939,6 +974,10 @@ def render_reconciliation_tab():
             col3.metric("Total Payroll Deferrals", f"${summary.total_deferrals_payroll:,.2f}")
             col4.metric("Total RK Deferrals", f"${summary.total_deferrals_rk:,.2f}")
             col5.metric("Deferral Mismatches", f"{summary.deferral_mismatch_count:,}")
+            
+            # Coverage gaps for deferrals
+            st.write(f"Only in Payroll (Deferrals): **{only_in_payroll}**")
+            st.write(f"Only in Recordkeeper (Deferrals): **{only_in_rk}**")
             
             # Loans section
             st.markdown("### Loans")
