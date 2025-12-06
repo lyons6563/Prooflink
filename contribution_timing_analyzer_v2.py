@@ -132,32 +132,44 @@ def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFram
 
     rename_map: Dict[str, str] = {}
     for col in df.columns:
+        original = col.strip().lower()
         key = _normalize_col_key(col)
         canonical = None
 
-        # employee id patterns
-        if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid"]):
-            canonical = "employee_id"
-
-        # pay date patterns
-        elif "paydate" in key or "checkdate" in key or "payperiodend" in key or "payperiodending" in key:
+        # Exact / near-exact matches on raw header text
+        if original in ("ee deferral $", "ee deferral", "employee deferral $"):
+            canonical = "def_amount"
+        elif original in ("ee roth $", "ee roth", "employee roth $"):
+            canonical = "roth_amount"
+        elif original in ("pay date", "payroll date", "pay period end date", "pay period ending", "check date", "payroll run date"):
             canonical = "pay_date"
 
-        # deferral amount patterns (EE deferral / employee deferral / pretax)
-        elif "deferral" in key and ("ee" in key or "employee" in key or "pretax" in key):
-            canonical = "def_amount"
-        elif key.startswith("deferralamount"):
-            canonical = "def_amount"
+        # If canonical not set by original-name checks, fall back to the existing
+        # normalized-key pattern logic (using _normalize_col_key and key-based patterns).
+        if canonical is None:
+            # employee id patterns
+            if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid"]):
+                canonical = "employee_id"
 
-        # roth amount patterns
-        elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key):
-            canonical = "roth_amount"
+            # pay date patterns
+            elif "paydate" in key or "checkdate" in key or "payperiodend" in key or "payperiodending" in key:
+                canonical = "pay_date"
 
-        # loan amount patterns
-        elif "loan" in key and ("repaid" in key or "repayment" in key or "payment" in key or "pmt" in key or "amount" in key):
-            canonical = "loan_amount"
-        elif key == "loanamount":
-            canonical = "loan_amount"
+            # deferral amount patterns (EE deferral / employee deferral / pretax)
+            elif "deferral" in key and ("ee" in key or "employee" in key or "pretax" in key):
+                canonical = "def_amount"
+            elif key.startswith("deferralamount"):
+                canonical = "def_amount"
+
+            # roth amount patterns
+            elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key):
+                canonical = "roth_amount"
+
+            # loan amount patterns
+            elif "loan" in key and ("repaid" in key or "repayment" in key or "payment" in key or "pmt" in key or "amount" in key):
+                canonical = "loan_amount"
+            elif key == "loanamount":
+                canonical = "loan_amount"
 
         # Only add if canonical is determined and doesn't already exist
         if canonical is not None and canonical not in df.columns:
