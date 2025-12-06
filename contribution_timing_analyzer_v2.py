@@ -1,10 +1,111 @@
 import argparse
 from pathlib import Path
 from datetime import datetime
+from typing import List, Optional, Tuple
 import pandas as pd
 
 # Import normalization from main.py
 from main import normalize_column_names
+
+
+def classify_timing_risk(
+    total_rows: int,
+    num_late: int,
+    num_missing: int,
+    late_threshold_days: int,
+    max_days_late: Optional[int] = None,
+) -> Tuple[str, List[str]]:
+    """
+    Classify overall timing risk for Secure 2.0 purposes.
+
+    This is:
+      - Vendor-agnostic: only uses counts/thresholds, not vendor-specific fields.
+      - Audit-friendly: returns explicit drivers explaining *why* a level was chosen.
+
+    Returns:
+      timing_risk: "High", "Medium", "Low", or "N/A"
+      drivers: list of human-readable reasons for the classification
+    """
+    drivers: List[str] = []
+
+    # Guardrail: no data
+    if total_rows == 0:
+        timing_risk = "N/A"
+        drivers.append(
+            "No payroll rows were analyzed. Check input files, column mapping, "
+            "and filtered rows (e.g., all-zero deferrals)."
+        )
+        return timing_risk, drivers
+
+    # 1) Missing deposits are always High risk
+    if num_missing > 0:
+        timing_risk = "High"
+        drivers.append(
+            f"{num_missing} payroll row(s) have missing deposits "
+            "(contributions present in payroll but not in recordkeeper data)."
+        )
+        drivers.append(
+            "Missing deposits must be resolved before the plan can be considered "
+            "compliant with timely deposit requirements."
+        )
+        return timing_risk, drivers
+
+    # 2) No late rows and no missing deposits → Low risk
+    if num_late == 0:
+        timing_risk = "Low"
+        drivers.append(
+            f"No late contributions detected above the {late_threshold_days}-day "
+            "Secure 2.0 threshold."
+        )
+        drivers.append("No missing deposits detected between payroll and recordkeeper.")
+        return timing_risk, drivers
+
+    # 3) Late rows present, but no missing deposits → Medium or High
+    late_ratio = num_late / total_rows
+    drivers.append(
+        f"{num_late} late contribution row(s) detected above the "
+        f"{late_threshold_days}-day threshold out of {total_rows} payroll row(s)."
+    )
+    drivers.append(f"Late row percentage: {late_ratio:.2%}.")
+
+    if max_days_late is not None:
+        drivers.append(f"Maximum days late: {max_days_late} day(s).")
+
+        # Medium: slightly late + small footprint
+        if max_days_late <= late_threshold_days + 3 and late_ratio < 0.05:
+            timing_risk = "Medium"
+            drivers.append(
+                "Delays are only slightly above the threshold and impact fewer than "
+                "5% of rows. Escalated review recommended, but not systemic."
+            )
+        else:
+            timing_risk = "High"
+            if max_days_late > late_threshold_days + 10:
+                drivers.append(
+                    "Some contributions are significantly late (more than 10 days "
+                    "beyond the threshold)."
+                )
+            if late_ratio >= 0.05:
+                drivers.append(
+                    "Late contributions affect 5% or more of payroll rows, indicating "
+                    "a potential systemic timing issue."
+                )
+    else:
+        # Fallback if we don't have day-level lag; use ratio only
+        if late_ratio < 0.05:
+            timing_risk = "Medium"
+            drivers.append(
+                "Exact days-late data is not available, but fewer than 5% of rows "
+                "are late. Treated as Medium risk."
+            )
+        else:
+            timing_risk = "High"
+            drivers.append(
+                "Exact days-late data is not available and 5% or more of rows are "
+                "late. Treated as High risk."
+            )
+
+    return timing_risk, drivers
 
 
 # ==============================
@@ -533,20 +634,38 @@ def run_timing_analysis(payroll_path: Path,
     late_path = output_dir / "late_contributions.csv"
     late_rows.to_csv(late_path, index=False)
 
+    # Compute core counts for timing risk
+    # result is the merged DataFrame from compute_late_contributions (payroll_df_normalized equivalent)
     total_rows = len(result)
-    total_late = int(result["is_late"].sum())
-    total_missing = int(result["missing_deposit"].sum())
+    late_contributions_df = result[result["is_late"]].copy() if "is_late" in result.columns else None
+    missing_deposits_df = result[result["missing_deposit"]].copy() if "missing_deposit" in result.columns else None
     
-    # Calculate timing risk
-    timing_risk = compute_timing_risk(total_rows, total_late)
+    num_late = len(late_contributions_df) if late_contributions_df is not None else 0
+    # Compute num_missing directly from result DataFrame to ensure accuracy
+    if "missing_deposit" in result.columns:
+        num_missing = int(result["missing_deposit"].sum())
+    else:
+        num_missing = len(missing_deposits_df) if missing_deposits_df is not None else 0
 
+    # Hard business rule:
+    # - Any missing deposits -> High risk
+    # - Otherwise, any late rows -> Medium risk (for now)
+    # - Otherwise -> Low risk
+    if num_missing > 0:
+        timing_risk = "High"
+    elif num_late > 0:
+        timing_risk = "Medium"
+    else:
+        timing_risk = "Low"
+
+    print()
     print("==============================")
     print("  CONTRIBUTION TIMING SUMMARY")
     print("==============================")
     print()
     print(f"Total payroll rows analyzed:  {total_rows}")
-    print(f"Late contributions (> {late_threshold_days} days): {total_late}")
-    print(f"Missing deposit rows:         {total_missing}")
+    print(f"Late contributions (> {late_threshold_days} days): {num_late}")
+    print(f"Missing deposit rows:         {num_missing}")
     print(f"Timing Risk:                  {timing_risk}")
     print()
     print(f"Late-contribution detail CSV written to: {late_path}")
