@@ -732,10 +732,6 @@ def run_timing_analysis(payroll_path: Path,
     # Apply vendor-agnostic column aliases to standardize headers
     raw_payroll = apply_column_aliases(raw_payroll, role="payroll")
     raw_rk = apply_column_aliases(raw_rk, role="rk")
-    
-    # Debug: log columns after aliasing
-    print("DEBUG PAYROLL COLUMNS (after aliasing):", list(raw_payroll.columns))
-    print("DEBUG RK COLUMNS (after aliasing):", list(raw_rk.columns))
 
     payroll_vendor, rk_vendor = detect_vendors(
         payroll_df=raw_payroll,
@@ -755,10 +751,6 @@ def run_timing_analysis(payroll_path: Path,
 
     payroll = normalize_payroll(raw_payroll, payroll_vendor, payroll_confidence)
     rk = normalize_rk(raw_rk, rk_vendor, rk_confidence)
-    
-    # Debug: log columns after normalization
-    print("DEBUG PAYROLL COLUMNS (after normalization):", list(payroll.columns))
-    print("DEBUG RK COLUMNS (after normalization):", list(rk.columns))
     
     # Canonical warning checks after normalization
     if "pay_date" not in payroll.columns:
