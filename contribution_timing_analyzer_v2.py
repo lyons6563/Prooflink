@@ -1,7 +1,8 @@
 import argparse
+import re
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 # Import normalization from main.py
@@ -109,6 +110,66 @@ def classify_timing_risk(
 
 
 # ==============================
+# Column alias resolution
+# ==============================
+
+def _normalize_col_key(name: str) -> str:
+    # lower, remove spaces and common punctuation/symbols for matching
+    key = name.strip().lower()
+    key = re.sub(r"[\s\$\%\#\-/]+", "", key)
+    return key
+
+
+def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFrame:
+    """
+    Apply vendor-agnostic column alias mapping to standardize headers
+    onto our canonical names.
+
+    role: "payroll" or "rk" (if you need to treat sides differently later).
+    """
+    if df is None or df.empty:
+        return df
+
+    rename_map: Dict[str, str] = {}
+    for col in df.columns:
+        key = _normalize_col_key(col)
+        canonical = None
+
+        # employee id patterns
+        if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid"]):
+            canonical = "employee_id"
+
+        # pay date patterns
+        elif "paydate" in key or "checkdate" in key or "payperiodend" in key or "payperiodending" in key:
+            canonical = "pay_date"
+
+        # deferral amount patterns (EE deferral / employee deferral / pretax)
+        elif "deferral" in key and ("ee" in key or "employee" in key or "pretax" in key):
+            canonical = "def_amount"
+        elif key.startswith("deferralamount"):
+            canonical = "def_amount"
+
+        # roth amount patterns
+        elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key):
+            canonical = "roth_amount"
+
+        # loan amount patterns
+        elif "loan" in key and ("repaid" in key or "repayment" in key or "payment" in key or "pmt" in key or "amount" in key):
+            canonical = "loan_amount"
+        elif key == "loanamount":
+            canonical = "loan_amount"
+
+        # Only add if canonical is determined and doesn't already exist
+        if canonical is not None and canonical not in df.columns:
+            rename_map[col] = canonical
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
+
+
+# ==============================
 # File loading
 # ==============================
 
@@ -130,44 +191,101 @@ def load_table(path: Path) -> pd.DataFrame:
 # Vendor detection
 # ==============================
 
-def detect_payroll_vendor(df: pd.DataFrame) -> str:
-    cols = {c.lower() for c in df.columns}
+def detect_vendors(
+    payroll_df: Optional[pd.DataFrame],
+    rk_df: Optional[pd.DataFrame],
+    payroll_source_name: Optional[str] = None,
+    rk_source_name: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Detect payroll vendor and recordkeeper based on column patterns and/or file name hints.
 
-    # ADP-style heuristic
-    if {"emp id", "check date", "ee deferral $"}.issubset(cols):
-        return "ADP"
+    Returns:
+        payroll_vendor: str
+        recordkeeper_vendor: str
 
-    # Our synthetic payroll schema
-    if {"empnumber", "payroll_run_date", "pretax_defl"}.issubset(cols):
-        return "GenericPayroll"
+    Fallbacks:
+        payroll_vendor: "GenericPayroll"
+        recordkeeper_vendor: "UnknownRK"
+    """
+    payroll_vendor = "GenericPayroll"
+    rk_vendor = "UnknownRK"
 
-    # 457(b) / municipal-style payroll schema (City of Lakes example)
-    if {"employee_id", "payroll_date", "457b_ee_pretax_amt", "457b_ee_roth_amt"}.issubset(
-        cols
-    ):
-        return "City457Payroll"
+    # Payroll vendor detection
+    if payroll_df is not None and not payroll_df.empty:
+        cols_lower = {c.lower() for c in payroll_df.columns}
+        
+        # 1) Filename hints (case-insensitive)
+        if payroll_source_name:
+            source_lower = str(payroll_source_name).lower()
+            if any(hint in source_lower for hint in ["adp"]):
+                payroll_vendor = "ADP"
+            elif any(hint in source_lower for hint in ["paychex", "paylocity", "paycor", "workday"]):
+                payroll_vendor = "Paychex"  # Generic payroll vendor
+            elif any(hint in source_lower for hint in ["payroll"]):
+                payroll_vendor = "GenericPayroll"
+        
+        # 2) Column pattern matching (scoring approach)
+        vendor_scores = {}
+        
+        # ADP signature columns
+        adp_cols = {"emp id", "check date", "ee deferral $"}
+        if adp_cols.issubset(cols_lower):
+            vendor_scores["ADP"] = len(adp_cols)
+        
+        # GenericPayroll signature columns
+        generic_cols = {"empnumber", "payroll_run_date", "pretax_defl"}
+        if generic_cols.issubset(cols_lower):
+            vendor_scores["GenericPayroll"] = len(generic_cols)
+        
+        # City457Payroll signature columns
+        city457_cols = {"employee_id", "payroll_date", "457b_ee_pretax_amt", "457b_ee_roth_amt"}
+        if city457_cols.issubset(cols_lower):
+            vendor_scores["City457Payroll"] = len(city457_cols)
+        
+        # Pick vendor with highest score if any match
+        if vendor_scores:
+            payroll_vendor = max(vendor_scores, key=vendor_scores.get)
 
-    return "UnknownPayroll"
+    # Recordkeeper vendor detection
+    if rk_df is not None and not rk_df.empty:
+        cols_lower = {c.lower() for c in rk_df.columns}
+        
+        # 1) Filename hints (case-insensitive)
+        if rk_source_name:
+            source_lower = str(rk_source_name).lower()
+            if any(hint in source_lower for hint in ["empower"]):
+                rk_vendor = "Empower"
+            elif any(hint in source_lower for hint in ["fidelity"]):
+                rk_vendor = "Fidelity"
+            elif any(hint in source_lower for hint in ["vanguard"]):
+                rk_vendor = "Vanguard"
+            elif any(hint in source_lower for hint in ["principal", "nationwide", "jhancock", "johnhancock", "mfs", "tiaa", "voia", "voay", "massmutual"]):
+                rk_vendor = "GenericRK"  # Generic recordkeeper
+        
+        # 2) Column pattern matching (scoring approach)
+        vendor_scores = {}
+        
+        # Empower signature columns
+        empower_cols = {"part_id", "post_date", "ee_pretax"}
+        if empower_cols.issubset(cols_lower):
+            vendor_scores["Empower"] = len(empower_cols)
+        
+        # GenericRK signature columns
+        generic_rk_cols = {"part_id", "post_date", "ee_pretax", "ee_roth", "loan_contr"}
+        if generic_rk_cols.issubset(cols_lower):
+            vendor_scores["GenericRK"] = len(generic_rk_cols)
+        
+        # City457RK signature columns
+        city457_rk_cols = {"plan_id", "recordkeeper_client_id", "money_type", "contribution_amount"}
+        if city457_rk_cols.issubset(cols_lower):
+            vendor_scores["City457RK"] = len(city457_rk_cols)
+        
+        # Pick vendor with highest score if any match
+        if vendor_scores:
+            rk_vendor = max(vendor_scores, key=vendor_scores.get)
 
-
-def detect_rk_vendor(df: pd.DataFrame) -> str:
-    cols = {c.lower() for c in df.columns}
-
-    # Empower-style heuristic
-    if {"part_id", "post_date", "ee_pretax"}.issubset(cols):
-        return "Empower"
-
-    # Our synthetic RK schema
-    if {"part_id", "post_date", "ee_pretax", "ee_roth", "loan_contr"}.issubset(cols):
-        return "GenericRK"
-
-    # 457(b) RK export schema (City of Lakes)
-    if {"plan_id", "recordkeeper_client_id", "money_type", "contribution_amount"}.issubset(
-        cols
-    ):
-        return "City457RK"
-
-    return "UnknownRK"
+    return payroll_vendor, rk_vendor
 
 
 # ==============================
@@ -593,9 +711,17 @@ def run_timing_analysis(payroll_path: Path,
     # Normalize column names first (handles flexible deferral/roth variants)
     raw_payroll = normalize_column_names(raw_payroll)
     raw_rk = normalize_column_names(raw_rk)
+    
+    # Apply vendor-agnostic column aliases to standardize headers
+    raw_payroll = apply_column_aliases(raw_payroll, role="payroll")
+    raw_rk = apply_column_aliases(raw_rk, role="rk")
 
-    payroll_vendor = detect_payroll_vendor(raw_payroll)
-    rk_vendor = detect_rk_vendor(raw_rk)
+    payroll_vendor, rk_vendor = detect_vendors(
+        payroll_df=raw_payroll,
+        rk_df=raw_rk,
+        payroll_source_name=str(payroll_path) if payroll_path else None,
+        rk_source_name=str(rk_path) if rk_path else None,
+    )
     
     # Default confidence to 0.0 for CLI (no confidence scoring in timing analyzer)
     payroll_confidence = 0.0
@@ -609,19 +735,12 @@ def run_timing_analysis(payroll_path: Path,
     payroll = normalize_payroll(raw_payroll, payroll_vendor, payroll_confidence)
     rk = normalize_rk(raw_rk, rk_vendor, rk_confidence)
 
-    # Normalize join key types to avoid pandas merge dtype errors
-    if "employee_id" in payroll.columns:
-        payroll["employee_id"] = (
-            payroll["employee_id"]
-            .astype(str)
-            .str.strip()
-        )
-    if "employee_id" in rk.columns:
-        rk["employee_id"] = (
-            rk["employee_id"]
-            .astype(str)
-            .str.strip()
-        )
+    # Canonical join key for participants
+    # Normalize employee_id to string for vendor-agnostic matching
+    # Normalize employee_id types for consistent matching
+    for df_name, df in [("payroll", payroll), ("recordkeeper", rk)]:
+        if df is not None and "employee_id" in df.columns:
+            df["employee_id"] = df["employee_id"].astype(str).str.strip()
 
     result = compute_late_contributions(
         payroll_df=payroll,

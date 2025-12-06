@@ -14,6 +14,25 @@ import json
 from main import RunSummary, run_reconciliation_with_summary
 
 
+def format_timing_risk_badge(timing_risk: str) -> str:
+    """
+    Map raw timing risk level to a badge string with emoji.
+
+    Expected values: "High", "Medium", "Low", or None/other.
+    """
+    if not timing_risk:
+        return "⚪ N/A"
+
+    level = timing_risk.strip().lower()
+    if level == "high":
+        return "🔴 High"
+    if level == "medium":
+        return "🟡 Medium"
+    if level == "low":
+        return "🟢 Low"
+    return "⚪ N/A"
+
+
 def check_password():
     """Simple password gate using Streamlit secrets."""
     def password_entered():
@@ -510,18 +529,9 @@ def render_contribution_timing_tab():
                 st.divider()
                 
                 # Display Timing Risk prominently at the top
-                if metrics["timing_risk"]:
-                    risk = metrics["timing_risk"]
-                    if risk == "Low":
-                        emoji = "🟢"
-                    elif risk == "Medium":
-                        emoji = "🟠"
-                    elif risk == "High":
-                        emoji = "🔴"
-                    else:  # N/A
-                        emoji = "⚪"
-                    
-                    st.markdown(f"**Timing Risk:** {emoji} {risk}")
+                timing_risk_raw = metrics.get("timing_risk")
+                timing_risk_display = format_timing_risk_badge(timing_risk_raw)
+                st.markdown(f"**Timing Risk:** {timing_risk_display}")
                 
                 col3, col4, col5 = st.columns(3)
                 
