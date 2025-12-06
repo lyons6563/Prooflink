@@ -203,6 +203,69 @@ def load_table(path: Path) -> pd.DataFrame:
 # Vendor detection
 # ==============================
 
+def detect_vendors_from_files(payroll_df, rk_df, payroll_path=None, rk_path=None):
+    """
+    Detect payroll vendor and recordkeeper vendor using filename heuristics
+    and column signature pattern matching.
+
+    Returns:
+        (payroll_vendor, rk_vendor)
+    """
+    payroll_vendor = None
+    rk_vendor = None
+
+    # A) Filename heuristic (case-insensitive)
+    if payroll_path:
+        p = str(payroll_path).lower()
+        if "adp" in p:
+            payroll_vendor = "ADP"
+        elif "paychex" in p:
+            payroll_vendor = "Paychex"
+        elif "paylocity" in p:
+            payroll_vendor = "Paylocity"
+        elif "paycor" in p:
+            payroll_vendor = "Paycor"
+        elif "workday" in p:
+            payroll_vendor = "Workday"
+
+    if rk_path:
+        r = str(rk_path).lower()
+        if "empower" in r:
+            rk_vendor = "Empower"
+        elif "fidelity" in r:
+            rk_vendor = "Fidelity"
+        elif "principal" in r:
+            rk_vendor = "Principal"
+        elif "tiaa" in r:
+            rk_vendor = "TIAA"
+        elif "voya" in r or "voia" in r:
+            rk_vendor = "Voya"
+
+    # B) Column signature fallback
+    if payroll_df is not None and not payroll_df.empty and not payroll_vendor:
+        cols = [c.lower() for c in payroll_df.columns]
+        if any(c in cols for c in ["batch id", "check date"]):
+            payroll_vendor = "ADP"
+        if any(c in cols for c in ["company code"]):
+            payroll_vendor = "ADP"
+
+    if rk_df is not None and not rk_df.empty and not rk_vendor:
+        rkcols = [c.lower() for c in rk_df.columns]
+        if "participant number" in rkcols and "fund name" in rkcols:
+            rk_vendor = "Empower"
+        if "ee pretax amt" in rkcols or "ee roth amt" in rkcols:
+            rk_vendor = "Fidelity"
+
+    # C) Defaults
+    if not payroll_vendor:
+        payroll_vendor = "GenericPayroll"
+
+    if not rk_vendor:
+        rk_vendor = "UnknownRK"
+
+    return payroll_vendor, rk_vendor
+
+
 def detect_vendors(
     payroll_df: Optional[pd.DataFrame],
     rk_df: Optional[pd.DataFrame],
@@ -733,11 +796,11 @@ def run_timing_analysis(payroll_path: Path,
     raw_payroll = apply_column_aliases(raw_payroll, role="payroll")
     raw_rk = apply_column_aliases(raw_rk, role="rk")
 
-    payroll_vendor, rk_vendor = detect_vendors(
+    payroll_vendor, rk_vendor = detect_vendors_from_files(
         payroll_df=raw_payroll,
         rk_df=raw_rk,
-        payroll_source_name=str(payroll_path) if payroll_path else None,
-        rk_source_name=str(rk_path) if rk_path else None,
+        payroll_path=payroll_path,
+        rk_path=rk_path,
     )
     
     # Default confidence to 0.0 for CLI (no confidence scoring in timing analyzer)
