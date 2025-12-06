@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# OS / editor junk
+.DS_Store
+.idea/
+.vscode/
+
+# Proof artifacts (not source)
+proofs/*.json
