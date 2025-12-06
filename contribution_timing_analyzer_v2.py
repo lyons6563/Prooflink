@@ -374,20 +374,22 @@ def normalize_payroll(df: pd.DataFrame, vendor: str, vendor_confidence: float = 
         if pay_date_col:
             out["pay_date"] = pd.to_datetime(df[pay_date_col], errors="coerce")
         else:
-            print("[WARN] pay_date column not found. Late contribution detection may be limited.")
             out["pay_date"] = pd.NaT
         
-        # Use normalized column names from normalize_column_names()
-        if "EE Deferral $" in df.columns:
+        # Use normalized column names from normalize_column_names() or canonical aliases
+        # Check for canonical names first, then fall back to vendor-specific names
+        if "def_amount" in df.columns:
+            out["payroll_pretax"] = pd.to_numeric(df["def_amount"], errors="coerce").fillna(0.0)
+        elif "EE Deferral $" in df.columns:
             out["payroll_pretax"] = pd.to_numeric(df["EE Deferral $"], errors="coerce").fillna(0.0)
         else:
-            print("[WARN] 'EE Deferral $' column not found after normalization. Using 0.0.")
             out["payroll_pretax"] = 0.0
         
-        if "EE Roth $" in df.columns:
+        if "roth_amount" in df.columns:
+            out["payroll_roth"] = pd.to_numeric(df["roth_amount"], errors="coerce").fillna(0.0)
+        elif "EE Roth $" in df.columns:
             out["payroll_roth"] = pd.to_numeric(df["EE Roth $"], errors="coerce").fillna(0.0)
         else:
-            print("[WARN] 'EE Roth $' column not found after normalization. Using 0.0.")
             out["payroll_roth"] = 0.0
         
         if "loan_amount" in df.columns:
@@ -529,17 +531,20 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
             print("[WARN] deposit_date column not found in RK. Late contribution detection may be limited.")
             out["deposit_date"] = pd.NaT
         
-        # Use normalized column names from normalize_column_names()
-        if "EE Deferral $" in df.columns:
+        # Use normalized column names from normalize_column_names() or canonical aliases
+        # Check for canonical names first, then fall back to vendor-specific names
+        if "def_amount" in df.columns:
+            out["rk_pretax"] = pd.to_numeric(df["def_amount"], errors="coerce").fillna(0.0)
+        elif "EE Deferral $" in df.columns:
             out["rk_pretax"] = pd.to_numeric(df["EE Deferral $"], errors="coerce").fillna(0.0)
         else:
-            print("[WARN] 'EE Deferral $' column not found in RK after normalization. Using 0.0.")
             out["rk_pretax"] = 0.0
         
-        if "EE Roth $" in df.columns:
+        if "roth_amount" in df.columns:
+            out["rk_roth"] = pd.to_numeric(df["roth_amount"], errors="coerce").fillna(0.0)
+        elif "EE Roth $" in df.columns:
             out["rk_roth"] = pd.to_numeric(df["EE Roth $"], errors="coerce").fillna(0.0)
         else:
-            print("[WARN] 'EE Roth $' column not found in RK after normalization. Using 0.0.")
             out["rk_roth"] = 0.0
         
         if "loan_amount" in df.columns:
@@ -754,6 +759,22 @@ def run_timing_analysis(payroll_path: Path,
     # Debug: log columns after normalization
     print("DEBUG PAYROLL COLUMNS (after normalization):", list(payroll.columns))
     print("DEBUG RK COLUMNS (after normalization):", list(rk.columns))
+    
+    # Canonical warning checks after normalization
+    if "pay_date" not in payroll.columns:
+        print("[WARN] pay_date column not found. Late contribution detection may be limited.")
+    
+    if "payroll_pretax" not in payroll.columns:
+        print("[WARN] Payroll pretax deferral column not found after normalization. Using 0.0 for pretax amounts.")
+    
+    if "payroll_roth" not in payroll.columns:
+        print("[WARN] Payroll Roth deferral column not found after normalization. Using 0.0 for Roth amounts.")
+    
+    if "rk_pretax" not in rk.columns:
+        print("[WARN] Recordkeeper pretax column not found after normalization. Using 0.0 for pretax amounts.")
+    
+    if "rk_roth" not in rk.columns:
+        print("[WARN] Recordkeeper Roth column not found after normalization. Using 0.0 for Roth amounts.")
 
     # Canonical join key for participants
     # Normalize employee_id to string for vendor-agnostic matching
