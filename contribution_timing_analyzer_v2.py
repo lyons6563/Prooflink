@@ -165,6 +165,10 @@ def normalize_payroll(df: pd.DataFrame, vendor: str, vendor_confidence: float = 
             print("[WARN] 'loan_amount' column not found. Using 0.0.")
             out["payroll_loan"] = 0.0
         
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
         return out
     
     # Only reach here if we have a known vendor with high confidence
@@ -215,6 +219,10 @@ def normalize_payroll(df: pd.DataFrame, vendor: str, vendor_confidence: float = 
         out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
 
     out["pay_date"] = pd.to_datetime(out["pay_date"], errors="coerce")
+    
+    # Normalize employee_id to string dtype for consistent merging
+    if "employee_id" in out.columns:
+        out["employee_id"] = out["employee_id"].astype(str).str.strip()
 
     return out
 
@@ -309,6 +317,10 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
             print("[WARN] 'loan_amount' column not found in RK. Using 0.0.")
             out["rk_loan"] = 0.0
         
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
         return out
 
     # Only reach here if we have a known vendor with high confidence
@@ -334,6 +346,11 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
             out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
 
         out["deposit_date"] = pd.to_datetime(out["deposit_date"], errors="coerce")
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
         return out
 
     elif vendor_str == "City457RK":
@@ -371,6 +388,10 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
         out["rk_pretax"] = pd.to_numeric(pretax_series, errors="coerce").fillna(0.0)
         out["rk_roth"] = pd.to_numeric(roth_series, errors="coerce").fillna(0.0)
         out["rk_loan"] = 0.0  # no explicit loan field in this RK schema
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
 
         return out
 
@@ -431,6 +452,12 @@ def compute_late_contributions(payroll_df: pd.DataFrame,
         + rk_df["rk_loan"]
     )
 
+    # Defensive: ensure employee_id is normalized before merge
+    if "employee_id" in payroll_df.columns:
+        payroll_df["employee_id"] = payroll_df["employee_id"].astype(str).str.strip()
+    if "employee_id" in rk_df.columns:
+        rk_df["employee_id"] = rk_df["employee_id"].astype(str).str.strip()
+
     merged = payroll_df.merge(
         rk_df,
         on=["employee_id"],
@@ -480,6 +507,20 @@ def run_timing_analysis(payroll_path: Path,
 
     payroll = normalize_payroll(raw_payroll, payroll_vendor, payroll_confidence)
     rk = normalize_rk(raw_rk, rk_vendor, rk_confidence)
+
+    # Normalize join key types to avoid pandas merge dtype errors
+    if "employee_id" in payroll.columns:
+        payroll["employee_id"] = (
+            payroll["employee_id"]
+            .astype(str)
+            .str.strip()
+        )
+    if "employee_id" in rk.columns:
+        rk["employee_id"] = (
+            rk["employee_id"]
+            .astype(str)
+            .str.strip()
+        )
 
     result = compute_late_contributions(
         payroll_df=payroll,
