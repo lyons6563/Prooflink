@@ -475,6 +475,76 @@ def run_reconciliation(
         # Payroll has loans, RK has no explicit loan column -> treat RK as zero loans
         r["loan_amount"] = 0.0
 
+    # =========================
+    # Secure 2.0 fields (payroll side only)
+    # =========================
+    secure2_fields_missing = []
+
+    def _get_secure2_source(col_name: str) -> str | None:
+        """
+        Prefer a direct normalized column (e.g. 'is_hce', 'catchup_pretax', 'catchup_roth').
+        If not present, fall back to the vendor mapping in payroll_cols.
+        """
+        # Direct column present?
+        if col_name in p.columns:
+            return col_name
+
+        # Fall back to vendor-specific mapping
+        mapped = payroll_cols.get(col_name)
+        if mapped and mapped in p.columns:
+            return mapped
+
+        return None
+
+    # is_hce (boolean)
+    is_hce_src = _get_secure2_source("is_hce")
+    if is_hce_src:
+        p["is_hce"] = (
+            p[is_hce_src]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace(
+                {
+                    "true": True,
+                    "false": False,
+                    "1": True,
+                    "0": False,
+                    "y": True,
+                    "n": False,
+                    "yes": True,
+                    "no": False,
+                }
+            )
+            .astype(bool)
+        )
+    else:
+        p["is_hce"] = False
+        secure2_fields_missing.append("is_hce")
+
+    # catchup_pretax (amount)
+    catchup_pretax_src = _get_secure2_source("catchup_pretax")
+    if catchup_pretax_src:
+        p["catchup_pretax"] = parse_amount(p[catchup_pretax_src])
+    else:
+        p["catchup_pretax"] = 0.0
+        secure2_fields_missing.append("catchup_pretax")
+
+    # catchup_roth (amount)
+    catchup_roth_src = _get_secure2_source("catchup_roth")
+    if catchup_roth_src:
+        p["catchup_roth"] = parse_amount(p[catchup_roth_src])
+    else:
+        p["catchup_roth"] = 0.0
+        secure2_fields_missing.append("catchup_roth")
+
+    # Warn if any Secure 2.0 fields are missing
+    if secure2_fields_missing:
+        print(
+            f"[WARN] Secure 2.0 fields not found in payroll file "
+            f"({', '.join(secure2_fields_missing)}). Secure 2.0 checks will be limited."
+        )
+
     # Extended logical mappings
     payroll_cols_ext = payroll_cols.copy()
     rk_cols_ext = rk_cols.copy()
@@ -511,6 +581,21 @@ def run_reconciliation(
         required_keys=["employee_id", "loan_amount"],
         aggregate_by_employee=True,
     )
+
+    # =========================
+    # Secure 2.0 compliance checks
+    # =========================
+    secure20_exceptions = check_secure20_catchup(p)
+    
+    # Write Secure 2.0 exceptions to CSV if any violations found
+    secure20_exceptions_path = output_dir_path / "secure20_exceptions.csv"
+    if secure20_exceptions:
+        secure20_df = pd.DataFrame(secure20_exceptions)
+        secure20_df.to_csv(secure20_exceptions_path, index=False)
+        print(f"Secure 2.0 exceptions written to: {secure20_exceptions_path} ({len(secure20_exceptions)} violations)")
+    else:
+        # Don't create file if no exceptions
+        secure20_exceptions_path = None
 
     # =========================
     # Excel report + proof manifest
@@ -558,6 +643,7 @@ def run_reconciliation(
     only_in_recordkeeper_path = output_dir_path / "only_in_recordkeeper_deferrals.csv"
     late_deferrals_path = output_dir_path / "late_deferrals_contributions.csv"
     late_loans_path = output_dir_path / "late_loans_contributions.csv"
+    # secure20_exceptions_path is set earlier if exceptions exist
 
     # Mismatch + timing counts based on files
     mismatches = {
@@ -595,7 +681,12 @@ def run_reconciliation(
         "totals": totals,
         "mismatches": mismatches,
         "timing": timing,
+        "secure20_exceptions": secure20_exceptions,
     }
+    
+    # Add Secure 2.0 exceptions CSV path if file was created
+    if secure20_exceptions_path is not None:
+        results["secure20_exceptions_csv"] = str(secure20_exceptions_path)
 
     # Build consolidated evidence pack ZIP
     evidence_zip = build_evidence_pack(results)
@@ -623,6 +714,7 @@ def build_evidence_pack(results: dict) -> Path:
       - mismatch CSVs
       - late contribution CSVs
       - only-in-* CSVs
+      - Secure 2.0 exceptions CSV (if present)
       - manifest JSON (if present)
     """
     zip_path = DATA_OUT / "prooflink_evidence_pack.zip"
@@ -642,6 +734,7 @@ def build_evidence_pack(results: dict) -> Path:
         "only_in_recordkeeper",
         "late_deferrals",
         "late_loans",
+        "secure20_exceptions_csv",
         "manifest",
     ]
 
@@ -888,6 +981,36 @@ COLUMN_MAP = {
         "457b_loan_repay_amt",         # <-- add this line
     ],
 
+    # Secure 2.0 fields (payroll side only)
+    "is_hce": [
+        "is_hce",
+        "is hce",
+        "hce_flag",
+        "hce flag",
+        "hce",
+        "highly_compensated",
+        "highly compensated",
+        "highly compensated employee",
+    ],
+    "catchup_pretax": [
+        "catchup_pretax",
+        "catchup pretax",
+        "catch_up_pretax",
+        "catch up pretax",
+        "pretax catchup",
+        "pretax catch-up",
+        "catchup_contribution_pretax",
+    ],
+    "catchup_roth": [
+        "catchup_roth",
+        "catchup roth",
+        "catch_up_roth",
+        "catch up roth",
+        "roth catchup",
+        "roth catch-up",
+        "catchup_contribution_roth",
+    ],
+
     # RECORDKEEPER side amounts
     "rk_pretax": [
         "ee_pretax",
@@ -964,6 +1087,10 @@ PAYROLL_VENDOR_COLUMN_MAPS = {
         "optional": {
             # Fallback single-amount column for legacy flows
             "amount": ["EE Deferral $"],
+            # Secure 2.0 fields (optional)
+            "is_hce": ["Is_HCE", "HCE_Flag", "Highly_Compensated"],
+            "catchup_pretax": ["Catchup_Pretax", "Catch_Up_Pretax"],
+            "catchup_roth": ["Catchup_Roth", "Catch_Up_Roth"],
             # You can add division/location/paygroup later if needed
         },
     },
@@ -1179,6 +1306,75 @@ def parse_amount(series: pd.Series) -> pd.Series:
         .pipe(pd.to_numeric, errors="coerce")
         .fillna(0.0)
     )
+
+
+def check_secure20_catchup(payroll_df: pd.DataFrame) -> list[dict]:
+    """
+    Basic Secure 2.0 check on the payroll side.
+    
+    Checks for HCEs (Highly Compensated Employees) with pre-tax catch-up contributions.
+    Secure 2.0 requires that HCEs use Roth catch-up contributions, not pre-tax.
+    
+    Args:
+        payroll_df: Payroll dataframe with normalized columns:
+            - employee_id
+            - pay_date
+            - is_hce (boolean)
+            - catchup_pretax (float)
+            - catchup_roth (float)
+    
+    Returns:
+        List of exception dicts for HCEs with pre-tax catch-up. Each dict contains:
+            - employee_id
+            - pay_date
+            - catchup_pretax
+            - catchup_roth
+            - issue_code: "HCE_PRETAX_CATCHUP"
+            - description: Human-readable message
+        
+        Returns empty list if no violations found.
+    """
+    exceptions = []
+    
+    # Filter for HCEs with pre-tax catch-up contributions
+    hce_mask = payroll_df["is_hce"] == True
+    catchup_mask = payroll_df["catchup_pretax"] > 0.0
+    
+    violations = payroll_df[hce_mask & catchup_mask]
+    
+    for _, row in violations.iterrows():
+        # Employee ID: prefer normalized 'employee_id', fall back to 'EmpNumber'
+        if "employee_id" in payroll_df.columns:
+            employee_id_val = row.get("employee_id", "")
+        elif "EmpNumber" in payroll_df.columns:
+            employee_id_val = row.get("EmpNumber", "")
+        else:
+            employee_id_val = ""
+
+        # Pay date: prefer normalized 'pay_date', fall back to 'Payroll_Run_Date'
+        if "pay_date" in payroll_df.columns:
+            pay_date_val = row.get("pay_date", "")
+        elif "Payroll_Run_Date" in payroll_df.columns:
+            pay_date_val = row.get("Payroll_Run_Date", "")
+        else:
+            pay_date_val = ""
+
+        if pd.isna(employee_id_val):
+            employee_id_val = ""
+        if pd.isna(pay_date_val):
+            pay_date_val = ""
+
+        exception = {
+            "employee_id": str(employee_id_val),
+            "pay_date": str(pay_date_val),
+            "catchup_pretax": float(row.get("catchup_pretax", 0.0)),
+            "catchup_roth": float(row.get("catchup_roth", 0.0)),
+            "issue_code": "HCE_PRETAX_CATCHUP",
+            "description": "HCE has pre-tax catch-up; Secure 2.0 requires Roth catch-up for HCEs.",
+        }
+        exceptions.append(exception)
+    
+    return exceptions
 
 def safe_read_csv(path: Path) -> pd.DataFrame | None:
     """
@@ -1535,6 +1731,12 @@ def reconcile_stream(
         rk_norm = rk_norm.groupby("employee_id", as_index=False).agg(agg_r)
 
     # === Merge + mismatch logic ===
+    # Normalize join key types to avoid pandas merge dtype errors
+    if "employee_id" in payroll_norm.columns:
+        payroll_norm["employee_id"] = payroll_norm["employee_id"].astype(str)
+    if "employee_id" in rk_norm.columns:
+        rk_norm["employee_id"] = rk_norm["employee_id"].astype(str)
+
     merged = payroll_norm.merge(
         rk_norm,
         on="employee_id",
@@ -1612,181 +1814,46 @@ def reconcile_stream(
 # =========================
 
 def reconcile_payroll_vs_recordkeeper():
-    # Load config and override defaults if present
+    """
+    Legacy wrapper function that reads config and calls run_reconciliation_with_summary.
+    
+    This function maintains backward compatibility for callers that expect it to:
+    - Read file paths from config
+    - Use default output directories
+    - Return None (no return value)
+    
+    All reconciliation logic has been moved to run_reconciliation_with_summary().
+    """
+    # Load config and extract parameters
     cfg = load_config()
     global MAX_BUSINESS_DAYS_LAG
-
-    payroll_file = cfg.get("payroll_file", PAYROLL_FILE)
-    rk_file = cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
+    
+    # Set global MAX_BUSINESS_DAYS_LAG from config (run_reconciliation also does this, but set it here for consistency)
     MAX_BUSINESS_DAYS_LAG = cfg.get("max_business_days_lag", MAX_BUSINESS_DAYS_LAG)
-
-    # Load raw files (normalization happens inside load_csv)
-    payroll_df = load_csv(payroll_file)
-    rk_df = load_csv(rk_file)
-
-    # Detect vendors with confidence
-    payroll_vendor, payroll_confidence = detect_vendor_with_confidence(
-        payroll_df, PAYROLL_VENDOR_SIGNATURES, None
-    )
-    rk_vendor, rk_confidence = detect_vendor_with_confidence(
-        rk_df, RK_VENDOR_SIGNATURES, None
-    )
     
-    # Apply vendor-specific column mapping
-    payroll_df = apply_vendor_column_mapping(payroll_df, payroll_vendor, PAYROLL_VENDOR_SIGNATURES)
-    rk_df = apply_vendor_column_mapping(rk_df, rk_vendor, RK_VENDOR_SIGNATURES)
-
-    print("\n=== Vendor Detection ===")
-    print(f"Detected payroll vendor:     {payroll_vendor or 'Unknown / Generic'}")
-    print(f"Detected recordkeeper:       {rk_vendor or 'Unknown / Generic'}")
-
-    # Vendor-aware mapping: strict for vendor-required fields, flexible elsewhere,
-    # with a clean fallback to the generic COLUMN_MAP.
-    payroll_cols = infer_vendor_mapping(
-        payroll_df,
-        payroll_vendor,
-        PAYROLL_VENDOR_COLUMN_MAPS,
-        COLUMN_MAP,
-    )
-    rk_cols = infer_vendor_mapping(
-        rk_df,
-        rk_vendor,
-        RK_VENDOR_COLUMN_MAPS,
-        COLUMN_MAP,
-    )
-
-    print("\n=== Column Mapping (Payroll) ===")
-    for k, v in payroll_cols.items():
-        print(f"  {k} -> {v}")
-    print("\n=== Column Mapping (Recordkeeper) ===")
-    for k, v in rk_cols.items():
-        print(f"  {k} -> {v}")
-
-    # Ensure we at least know employee_id
-    if "employee_id" not in payroll_cols or "employee_id" not in rk_cols:
-        raise ValueError(
-            f"Cannot proceed: employee_id not found on both sides. "
-            f"Payroll columns: {list(payroll_df.columns)}, RK columns: {list(rk_df.columns)}"
-        )
-
-    # Ensure pay/deposit dates map if present
-    # Not required, but used for late logic
-    if "pay_date" not in payroll_cols:
-        print("[WARN] No pay_date mapped on payroll file; late logic will be limited.")
-    if "deposit_date" not in rk_cols:
-        print("[WARN] No deposit_date mapped on recordkeeper file; late logic will be limited.")
-
-    # Build synthetic logical keys for streams:
-    #  - deferrals: sum of pretax + roth
-    #  - loans: loan column
-    # To leverage reconcile_stream, we materialize these as virtual columns in temporary frames.
-
-    # Copy dataframes so we don't mutate originals
-    p = payroll_df.copy()
-    r = rk_df.copy()
-
-    # DEFERRALS
-    # Payroll side - Calculate total deferral (pretax + roth) when available
-    p_def = None
-    payroll_pretax_col = payroll_cols.get("payroll_pretax")
-    payroll_roth_col = payroll_cols.get("payroll_roth")
-    payroll_amount_col = payroll_cols.get("amount")
+    # Get file names from config and convert to full paths
+    payroll_filename = cfg.get("payroll_file", PAYROLL_FILE)
+    rk_filename = cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
+    payroll_csv = DATA_RAW / payroll_filename
+    rk_csv = DATA_RAW / rk_filename
     
-    # Check for normalized column names directly if not mapped
-    if not payroll_pretax_col and "EE Deferral $" in p.columns:
-        payroll_pretax_col = "EE Deferral $"
-    if not payroll_roth_col and "EE Roth $" in p.columns:
-        payroll_roth_col = "EE Roth $"
+    # Extract optional parameters from config
+    plan_name = cfg.get("plan_name", "Unknown Plan")
+    payroll_vendor_hint = cfg.get("payroll_vendor_hint")
+    rk_vendor_hint = cfg.get("rk_vendor_hint")
     
-    if payroll_pretax_col or payroll_roth_col or payroll_amount_col:
-        pretax = parse_amount(p[payroll_pretax_col]) if payroll_pretax_col else 0.0
-        roth = parse_amount(p[payroll_roth_col]) if payroll_roth_col else 0.0
-        # fallback: single amount column if no pretax/roth split
-        if not payroll_pretax_col and not payroll_roth_col and payroll_amount_col:
-            pretax = parse_amount(p[payroll_amount_col])
-            roth = 0.0
-        # Total deferral = pretax + roth (use both if available)
-        p_def = pretax + roth
-        p["deferral_amount"] = p_def
-
-    # RK side - Calculate total deferral (pretax + roth) when available
-    r_def = None
-    rk_pretax_col = rk_cols.get("rk_pretax")
-    rk_roth_col = rk_cols.get("rk_roth")
-    rk_amount_col = rk_cols.get("amount")
+    # Use default output directory (DATA_OUT)
+    output_dir = DATA_OUT
     
-    # Check for normalized column names directly if not mapped
-    if not rk_pretax_col and "EE Deferral $" in r.columns:
-        rk_pretax_col = "EE Deferral $"
-    if not rk_roth_col and "EE Roth $" in r.columns:
-        rk_roth_col = "EE Roth $"
-    
-    if rk_pretax_col or rk_roth_col or rk_amount_col:
-        pretax_rk = parse_amount(r[rk_pretax_col]) if rk_pretax_col else 0.0
-        roth_rk = parse_amount(r[rk_roth_col]) if rk_roth_col else 0.0
-        if not rk_pretax_col and not rk_roth_col and rk_amount_col:
-            pretax_rk = parse_amount(r[rk_amount_col])
-            roth_rk = 0.0
-        # Total deferral = pretax_rk + roth_rk (use both if available)
-        r_def = pretax_rk + roth_rk
-        r["deferral_amount"] = r_def
-
-        # LOANS
-    if "payroll_loan" in payroll_cols:
-        p["loan_amount"] = parse_amount(p[payroll_cols["payroll_loan"]])
-
-    if "rk_loan" in rk_cols:
-        r["loan_amount"] = parse_amount(r[rk_cols["rk_loan"]])
-    elif "payroll_loan" in payroll_cols:
-        # Payroll has loans, RK has no explicit loan column -> treat RK as zero loans
-        r["loan_amount"] = 0.0
-
-
-    # Build extended mapping dicts with virtual keys
-    payroll_cols_ext = payroll_cols.copy()
-    rk_cols_ext = rk_cols.copy()
-
-    if "deferral_amount" in p.columns:
-        payroll_cols_ext["def_amount"] = "deferral_amount"
-    if "deferral_amount" in r.columns:
-        rk_cols_ext["def_amount"] = "deferral_amount"
-
-    if "loan_amount" in p.columns:
-        payroll_cols_ext["loan_amount"] = "loan_amount"
-    if "loan_amount" in r.columns:
-        rk_cols_ext["loan_amount"] = "loan_amount"
-
-    # Map pay/deposit dates into logical keys if present
-    # (For late logic inside reconcile_stream)
-    if "pay_date" in payroll_cols_ext:
-        pass  # already mapped
-    else:
-        # try to map if payroll has something date-like but not in COLUMN_MAP (unlikely but defensive)
-        pass
-
-    if "deposit_date" in rk_cols_ext:
-        pass
-    else:
-        pass
-
-    reconcile_stream(
-        stream_name="deferrals",
-        payroll_df=p,
-        rk_df=r,
-        payroll_cols=payroll_cols_ext,
-        rk_cols=rk_cols_ext,
-        required_keys=["employee_id", "def_amount"],
-        aggregate_by_employee=True,
-    )
-
-    reconcile_stream(
-        stream_name="loans",
-        payroll_df=p,
-        rk_df=r,
-        payroll_cols=payroll_cols_ext,
-        rk_cols=rk_cols_ext,
-        required_keys=["employee_id", "loan_amount"],
-        aggregate_by_employee=True,
+    # Call the canonical reconciliation function
+    # Note: We ignore the return value to maintain backward compatibility (returns None)
+    run_reconciliation_with_summary(
+        payroll_csv=payroll_csv,
+        rk_csv=rk_csv,
+        output_dir=output_dir,
+        plan_name=plan_name,
+        payroll_vendor_hint=payroll_vendor_hint,
+        rk_vendor_hint=rk_vendor_hint,
     )
 
 
@@ -1919,24 +1986,31 @@ def main():
 
 
 if __name__ == "__main__":
+    import sys
     import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--payroll_csv", required=True)
-    parser.add_argument("--rk_csv", required=True)
-    parser.add_argument("--output_dir", default="data/processed")
-    parser.add_argument("--proofs_dir", default="proofs")
-    args = parser.parse_args()
+    # Check if any CLI arguments were provided
+    # If --payroll_csv is present, assume user wants CLI mode
+    has_cli_args = len(sys.argv) > 1 and "--payroll_csv" in sys.argv
 
-    run_reconciliation(
-        payroll_csv=args.payroll_csv,
-        rk_csv=args.rk_csv,
-        output_dir=args.output_dir,
-        proofs_dir=args.proofs_dir,
-    )
+    if has_cli_args:
+        # CLI mode: parse arguments and run reconciliation directly
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--payroll_csv", required=True)
+        parser.add_argument("--rk_csv", required=True)
+        parser.add_argument("--output_dir", default="data/processed")
+        parser.add_argument("--proofs_dir", default="proofs")
+        args = parser.parse_args()
 
-
-    main()
+        run_reconciliation(
+            payroll_csv=args.payroll_csv,
+            rk_csv=args.rk_csv,
+            output_dir=args.output_dir,
+            proofs_dir=args.proofs_dir,
+        )
+    else:
+        # No CLI args: use config-based wrapper (legacy behavior)
+        reconcile_payroll_vs_recordkeeper()
 
 
     

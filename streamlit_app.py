@@ -17,9 +17,21 @@ from main import RunSummary, run_reconciliation_with_summary
 def check_password():
     """Simple password gate using Streamlit secrets."""
     def password_entered():
-        if st.session_state["password"] == st.secrets["APP_PASSWORD"]:
+        # Determine the expected app password
+        try:
+            expected_password = st.secrets["APP_PASSWORD"]
+        except Exception:
+            # Fallback for local dev when no secrets.toml is configured
+            expected_password = "prooflink"
+            print("[WARN] APP_PASSWORD not found in st.secrets. Using default dev password 'prooflink'.")
+
+        if st.session_state.get("password") == expected_password:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]
+            # don't keep the raw password in session
+            try:
+                del st.session_state["password"]
+            except KeyError:
+                pass
         else:
             st.session_state["password_correct"] = False
 
@@ -939,6 +951,20 @@ def render_reconciliation_tab():
             st.markdown("### Late Contributions")
             col9 = st.columns(1)[0]
             col9.metric("Late Deferral Rows", f"{summary.late_deferral_count:,}")
+            
+            # Secure 2.0 Catch-Up Exceptions
+            secure20_exceptions = results_dict.get("secure20_exceptions", [])
+            if secure20_exceptions:
+                st.divider()
+                st.subheader("Secure 2.0 Catch-Up Exceptions")
+                st.write(f"{len(secure20_exceptions)} Secure 2.0 violation(s) detected (HCE pre-tax catch-up).")
+                
+                # Convert to DataFrame and display
+                secure20_df = pd.DataFrame(secure20_exceptions)
+                st.dataframe(secure20_df, use_container_width=True)
+            else:
+                # Optionally show a small caption if no violations
+                st.caption("No Secure 2.0 catch-up violations detected.")
             
             # Display raw stdout
             st.divider()
