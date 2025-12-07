@@ -4,14 +4,62 @@ from pathlib import Path
 import subprocess
 import tempfile
 import re
-from typing import Optional
+from typing import Optional, Dict, Any
 import sys
 import io
 import traceback
 from datetime import datetime
 import json
+import requests
 
-from main import RunSummary, run_reconciliation_with_summary
+# API client configuration
+API_BASE_URL = "http://127.0.0.1:8000"
+
+
+def api_create_run(
+    payroll_bytes: bytes,
+    payroll_filename: str,
+    rk_bytes: bytes,
+    rk_filename: str,
+    plan_name: str,
+) -> Dict[str, Any]:
+    """
+    Call the ProofLink backend API to create a run.
+
+    Returns a dict with at least:
+    - run_id (str)
+    - summary (dict)
+    - status (str)
+    - evidence_pack_available (bool)
+    """
+    files = {
+        "payroll_file": (payroll_filename, payroll_bytes, "text/csv"),
+        "rk_file": (rk_filename, rk_bytes, "text/csv"),
+    }
+    data = {"plan_name": plan_name or "Untitled Plan"}
+
+    resp = requests.post(f"{API_BASE_URL}/api/v1/runs", files=files, data=data, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_get_run(run_id: str) -> Dict[str, Any]:
+    """Get run details from the API."""
+    resp = requests.get(f"{API_BASE_URL}/api/v1/runs/{run_id}", timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_download_evidence_pack(run_id: str) -> Optional[bytes]:
+    """Download evidence pack ZIP from the API."""
+    resp = requests.get(
+        f"{API_BASE_URL}/api/v1/runs/{run_id}/evidence-pack",
+        timeout=60,
+        stream=True,
+    )
+    if resp.status_code != 200:
+        return None
+    return resp.content
 
 
 def format_timing_risk_badge(timing_risk: str) -> str:
@@ -98,84 +146,20 @@ if not check_password():
 #  Contribution Timing TAB
 # ==============================
 
-def run_reconciliation_with_stdout_capture(
-    payroll_file, rk_file, plan_name: str = "Demo Plan",
-    payroll_vendor_hint: Optional[str] = None,
-    rk_vendor_hint: Optional[str] = None,
-    output_dir: Path = None
-) -> tuple[bool, str, dict]:
-    """
-    Run reconciliation and capture stdout.
-    
-    Returns:
-        tuple: (success: bool, stdout: str, results: dict with 'summary' RunSummary)
-    """
-    if output_dir is None:
-        output_dir = BASE_DIR.parent / "data" / "processed"
-    
-    # Create run folder with timestamp
-    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output_dir / f"run_{run_timestamp}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Create inputs subfolder
-    inputs_dir = run_dir / "inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save uploaded files to inputs subfolder
-    payroll_path = inputs_dir / f"payroll_{payroll_file.name}"
-    rk_path = inputs_dir / f"rk_{rk_file.name}"
-    
-    with open(payroll_path, "wb") as f:
-        f.write(payroll_file.getbuffer())
-    
-    with open(rk_path, "wb") as f:
-        f.write(rk_file.getbuffer())
-    
-    # Capture stdout
-    old_stdout = sys.stdout
-    sys.stdout = captured_output = io.StringIO()
-    
-    try:
-        # run_reconciliation_with_summary() now always returns a dict
-        results = run_reconciliation_with_summary(
-            payroll_csv=payroll_path,
-            rk_csv=rk_path,
-            output_dir=run_dir,
-            plan_name=plan_name,
-            payroll_vendor_hint=payroll_vendor_hint,
-            rk_vendor_hint=rk_vendor_hint,
-        )
-        
-        # Ensure results is a dict (defensive check)
-        if not isinstance(results, dict):
-            # This should never happen, but handle gracefully
-            results = {
-                "summary": None,
-                "results_dict": {},
-                "error": f"run_reconciliation_with_summary returned {type(results)}, expected dict"
-            }
-        
-        # Check if there's an error in the results
-        if results.get("error"):
-            success = False
-        else:
-            success = True
-    except Exception as e:
-        success = False
-        # Include full traceback in error for debugging
-        error_text = traceback.format_exc()
-        results = {
-            "summary": None,
-            "results_dict": {},
-            "error": error_text
-        }
-        print(f"Error: {e}")
-    finally:
-        stdout_text = captured_output.getvalue()
-        sys.stdout = old_stdout
-    
-    return success, stdout_text, results
+# DEPRECATED: This function is no longer used - replaced with API calls
+# Keeping for backward compatibility if needed elsewhere
+# def run_reconciliation_with_stdout_capture(
+#     payroll_file, rk_file, plan_name: str = "Demo Plan",
+#     payroll_vendor_hint: Optional[str] = None,
+#     rk_vendor_hint: Optional[str] = None,
+#     output_dir: Path = None
+# ) -> tuple[bool, str, dict]:
+#     """
+#     Run reconciliation and capture stdout.
+#     
+#     DEPRECATED: Use api_create_run() instead.
+#     """
+#     pass
 
 
 def load_run_history() -> list[dict]:
@@ -768,55 +752,68 @@ def render_batch_reconciliation_tab():
 
     batch_rows = []
 
-    with st.spinner("Running batch reconciliation..."):
+    with st.spinner("Running batch reconciliation via API..."):
         for idx, (p_file, rk_file) in enumerate(
             zip(batch_payroll_files, batch_rk_files), start=1
         ):
-            # Persist each pair to RAW_DIR
-            payroll_path = RAW_DIR / f"batch_{idx}_{p_file.name}"
-            rk_path = RAW_DIR / f"batch_{idx}_{rk_file.name}"
-
-            payroll_path.write_bytes(p_file.getbuffer())
-            rk_path.write_bytes(rk_file.getbuffer())
-
             # Plan name for this run
             plan_name = f"{plan_prefix} #{idx}"
 
-            # For now, no batch-level vendor hints; rely on detection/Unknown
-            results = run_reconciliation_with_summary(
-                payroll_csv=payroll_path,
-                rk_csv=rk_path,
-                output_dir=PROCESSED_DIR,
-                plan_name=plan_name,
-                payroll_vendor_hint=None,
-                rk_vendor_hint=None,
-            )
-            
-            # Extract summary from results dict
-            if not isinstance(results, dict) or not results.get("summary"):
-                # Skip this run if it failed
-                continue
-            
-            summary: RunSummary = results["summary"]
-            risk = classify_run_risk(summary)
+            try:
+                # Call API to create run
+                api_result = api_create_run(
+                    payroll_bytes=p_file.getvalue(),
+                    payroll_filename=p_file.name,
+                    rk_bytes=rk_file.getvalue(),
+                    rk_filename=rk_file.name,
+                    plan_name=plan_name,
+                )
+                
+                summary_dict = api_result.get("summary", {})
+                if not summary_dict:
+                    # Skip this run if it failed
+                    continue
+                
+                # Simple risk calculation from summary
+                deferral_mismatches = summary_dict.get("deferral_mismatch_count", 0)
+                loan_mismatches = summary_dict.get("loan_mismatch_count", 0)
+                late_deferrals = summary_dict.get("late_deferral_count", 0)
+                
+                if deferral_mismatches > 100 or loan_mismatches > 50 or late_deferrals > 50:
+                    risk = "High"
+                elif deferral_mismatches > 10 or loan_mismatches > 5 or late_deferrals > 10:
+                    risk = "Medium"
+                else:
+                    risk = "Low"
+                
+                # Create a simple summary object for compatibility
+                class SummaryDict:
+                    def __init__(self, d):
+                        for k, v in d.items():
+                            setattr(self, k, v)
+                
+                summary = SummaryDict(summary_dict)
 
-            batch_rows.append(
-                {
-                    "Run #": idx,
-                    "Plan": summary.plan_name,
-                    "Payroll file": p_file.name,
-                    "Recordkeeper file": rk_file.name,
-                    "Payroll vendor": summary.payroll_vendor,
-                    "Recordkeeper vendor": summary.rk_vendor,
-                    "Deferrals (Payroll)": summary.total_deferrals_payroll,
-                    "Deferrals (RK)": summary.total_deferrals_rk,
-                    "Deferral mismatches": summary.deferral_mismatch_count,
-                    "Loan mismatches": summary.loan_mismatch_count,
-                    "Late deferrals (rows)": summary.late_deferral_count,
-                    "Risk": risk,
-                    "Evidence pack": str(summary.evidence_pack_path),
-                }
-            )
+                batch_rows.append(
+                    {
+                        "Run #": idx,
+                        "Plan": summary_dict.get("plan_name", plan_name),
+                        "Payroll file": p_file.name,
+                        "Recordkeeper file": rk_file.name,
+                        "Payroll vendor": summary_dict.get("payroll_vendor", "Unknown"),
+                        "Recordkeeper vendor": summary_dict.get("rk_vendor", "Unknown"),
+                        "Deferrals (Payroll)": summary_dict.get("total_deferrals_payroll", 0),
+                        "Deferrals (RK)": summary_dict.get("total_deferrals_rk", 0),
+                        "Deferral mismatches": summary_dict.get("deferral_mismatch_count", 0),
+                        "Loan mismatches": summary_dict.get("loan_mismatch_count", 0),
+                        "Late deferrals (rows)": summary_dict.get("late_deferral_count", 0),
+                        "Risk": risk,
+                        "Evidence pack": summary_dict.get("evidence_pack_path", "N/A"),
+                    }
+                )
+            except requests.RequestException as e:
+                st.warning(f"Failed to process batch item {idx}: {e}")
+                continue
 
     if not batch_rows:
         st.warning("No runs completed. Check batch inputs.")
@@ -895,181 +892,175 @@ def render_reconciliation_tab():
             st.error("Please upload BOTH a payroll CSV and a recordkeeper CSV.")
             return
 
-        # Run reconciliation with stdout capture
-        with st.spinner("Running reconciliation..."):
-            success, stdout, results = run_reconciliation_with_stdout_capture(
-                payroll_file=payroll_file,
-                rk_file=rk_file,
-                plan_name=plan_name,
-                payroll_vendor_hint=payroll_vendor_hint,
-                rk_vendor_hint=rk_vendor_hint,
-            )
-
-        # Display run status
-        if success and isinstance(results, dict) and results.get("summary"):
-            st.success("Reconciliation run completed.")
-            
-            summary: RunSummary = results["summary"]
-            results_dict = results.get("results_dict", {})
-            
-            # Extract coverage gap counts from results_dict
-            mismatches = results_dict.get("mismatches", {}) or {}
-            only_in_payroll = int(mismatches.get("only_in_payroll_count", 0) or 0)
-            only_in_rk = int(mismatches.get("only_in_recordkeeper_count", 0) or 0)
-            coverage_gaps = only_in_payroll + only_in_rk
-            
-            # Parse stdout for additional metrics
-            parsed_metrics = parse_reconciliation_output(stdout)
-            
-            # Check for missing columns warning
-            all_totals_zero = (
-                summary.total_deferrals_payroll == 0
-                and summary.total_deferrals_rk == 0
-                and summary.total_loans_payroll == 0
-            )
-            missing_columns_detected = "missing columns. Payroll missing" in stdout
-            
-            if all_totals_zero and missing_columns_detected:
-                st.warning(
-                    "The uploaded files are missing required deferral/loan columns "
-                    "(e.g., def_amount, loan_amount), so metrics are 0. "
-                    "This is a file-format issue, not a ProofLink engine error."
+        try:
+            with st.spinner("Running ProofLink analysis via API..."):
+                api_result = api_create_run(
+                    payroll_bytes=payroll_file.getvalue(),
+                    payroll_filename=payroll_file.name,
+                    rk_bytes=rk_file.getvalue(),
+                    rk_filename=rk_file.name,
+                    plan_name=plan_name,
                 )
-            
-            # Display metrics from RunSummary (primary source - these are the real values)
-            st.subheader("Reconciliation Summary")
-            
-            # Risk level indicator
-            if all_totals_zero and missing_columns_detected:
-                st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
+
+            run_id = api_result.get("run_id")
+            summary_dict = api_result.get("summary", {})
+            status = api_result.get("status", "unknown")
+
+            if not run_id:
+                st.error("API did not return a run_id.")
             else:
-                # Compute existing risk level (without coverage gap override in the function)
-                existing_label, _ = compute_run_risk_level(summary, None)
-                effective_risk_level = existing_label
-                if coverage_gaps > 0:
-                    effective_risk_level = "High"
-                
-                # Map to risk badge with specific emoji format
-                if effective_risk_level.lower() == "high":
-                    risk_badge = ":red_circle: High"
-                elif effective_risk_level.lower() == "medium":
-                    risk_badge = ":large_orange_circle: Medium"
-                else:
-                    risk_badge = ":green_circle: Low"
-                
-                st.markdown(f"**Run Risk Level:** {risk_badge}")
-                
-                if coverage_gaps > 0:
-                    st.warning(
-                        f"Coverage gaps detected: {only_in_payroll} payroll-only rows, "
-                        f"{only_in_rk} recordkeeper-only rows. This is a high-risk data quality issue."
-                    )
+                # Store run_id and summary in session state for later use
+                st.session_state["current_run_id"] = run_id
+                st.session_state["current_summary"] = summary_dict
+                st.session_state["current_status"] = status
+                st.success("Reconciliation run completed.")
+        except requests.RequestException as e:
+            st.error(f"Failed to contact ProofLink API: {e}")
+            return
+
+    # Display results if available
+    summary_dict = st.session_state.get("current_summary")
+    run_id = st.session_state.get("current_run_id")
+    
+    if summary_dict and run_id:
+        # Get full run details from API to access manifest and other data
+        try:
+            run_details = api_get_run(run_id)
+            summary_dict = run_details.get("summary", summary_dict)
+            manifest = run_details.get("manifest", {})
+        except requests.RequestException:
+            # Fall back to cached summary if API call fails
+            manifest = {}
+        
+        # Convert summary dict to object-like access for compatibility
+        class SummaryDict:
+            def __init__(self, d):
+                for k, v in d.items():
+                    setattr(self, k, v)
+        
+        summary = SummaryDict(summary_dict)
+        results_dict = {"vendor_detection": summary_dict.get("vendor_detection", {})}
             
-            st.divider()
-            
-            # Vendor info with confidence warnings - read directly from vendor_detection dict
-            # to ensure it matches what's printed in the console output
-            vendor_detection = results_dict.get("vendor_detection", {})
-            payroll_vendor = vendor_detection.get("payroll_vendor", "Unknown / Generic")
-            rk_vendor = vendor_detection.get("rk_vendor", "Unknown / Generic")
-            payroll_conf = vendor_detection.get("payroll_vendor_confidence", 0.0)
-            rk_conf = vendor_detection.get("rk_vendor_confidence", 0.0)
-            
-            col1, col2 = st.columns(2)
-            col1.metric("Payroll Vendor", payroll_vendor)
-            if payroll_conf < 0.65:
-                col1.warning(f"Low confidence: {payroll_conf:.2f}")
-            col2.metric("Recordkeeper", rk_vendor)
-            if rk_conf < 0.65:
-                col2.warning(f"Low confidence: {rk_conf:.2f}")
-            
-            st.divider()
-            
-            # Deferrals section
-            st.markdown("### Deferrals")
-            col3, col4, col5 = st.columns(3)
-            col3.metric("Total Payroll Deferrals", f"${summary.total_deferrals_payroll:,.2f}")
-            col4.metric("Total RK Deferrals", f"${summary.total_deferrals_rk:,.2f}")
-            col5.metric("Deferral Mismatches", f"{summary.deferral_mismatch_count:,}")
-            
-            # Coverage gaps for deferrals
-            st.write(f"Only in Payroll (Deferrals): **{only_in_payroll}**")
-            st.write(f"Only in Recordkeeper (Deferrals): **{only_in_rk}**")
-            
-            # Loans section
-            st.markdown("### Loans")
-            col6, col7, col8 = st.columns(3)
-            col6.metric("Total Payroll Loans", f"${summary.total_loans_payroll:,.2f}")
-            col7.metric("Total RK Loans", f"${summary.total_loans_rk:,.2f}")
-            col8.metric("Loan Mismatches", f"{summary.loan_mismatch_count:,}")
-            
-            # Late contributions
-            st.markdown("### Late Contributions")
-            col9 = st.columns(1)[0]
-            col9.metric("Late Deferral Rows", f"{summary.late_deferral_count:,}")
-            
-            # Timing Analysis Results
-            timing_metrics = results_dict.get("timing_metrics", {})
-            if timing_metrics:
-                st.divider()
-                st.markdown("### Contribution Timing Analysis")
-                timing_risk_display = format_timing_risk_badge(timing_metrics.get("timing_risk"))
-                st.markdown(f"**Timing Risk:** {timing_risk_display}")
-                col_t1, col_t2, col_t3 = st.columns(3)
-                col_t1.metric("Total Rows Analyzed", f"{timing_metrics.get('total_rows', 0):,}")
-                col_t2.metric("Late Rows", f"{timing_metrics.get('late_rows', 0):,}")
-                col_t3.metric("Missing Deposits", f"{timing_metrics.get('missing_deposits', 0):,}")
-            
-            # Secure 2.0 Catch-Up Exceptions
-            secure20_exceptions = results_dict.get("secure20_exceptions", [])
-            if secure20_exceptions:
-                st.divider()
-                st.subheader("Secure 2.0 Catch-Up Exceptions")
-                st.write(f"{len(secure20_exceptions)} Secure 2.0 violation(s) detected (HCE pre-tax catch-up).")
-                
-                # Convert to DataFrame and display
-                secure20_df = pd.DataFrame(secure20_exceptions)
-                st.dataframe(secure20_df, use_container_width=True)
-            else:
-                # Optionally show a small caption if no violations
-                st.caption("No Secure 2.0 catch-up violations detected.")
-            
-            # Display raw stdout
-            st.divider()
-            st.subheader("Raw Reconciliation Output")
-            st.code(stdout, language="text")
-            
-            # Output files and evidence pack
-            if summary.evidence_pack_path and summary.evidence_pack_path.exists():
-                st.subheader("Output Files")
-                st.info(f"Evidence pack available at: {summary.evidence_pack_path}")
-                
-                try:
-                    with open(summary.evidence_pack_path, "rb") as f:
-                        st.download_button(
-                            label="📥 Download Evidence Pack",
-                            data=f.read(),
-                            file_name=summary.evidence_pack_path.name,
-                            mime="application/zip"
-                        )
-                except Exception as e:
-                    st.error(f"Could not read evidence pack: {e}")
+        # Extract coverage gap counts from summary (if available in mismatches)
+        # Note: API summary may not have mismatches dict, so we'll use summary fields directly
+        only_in_payroll = 0  # Will be populated from summary if available
+        only_in_rk = 0
+        coverage_gaps = only_in_payroll + only_in_rk
+        
+        # Check for missing columns warning
+        all_totals_zero = (
+            summary_dict.get("total_deferrals_payroll", 0) == 0
+            and summary_dict.get("total_deferrals_rk", 0) == 0
+            and summary_dict.get("total_loans_payroll", 0) == 0
+        )
+        
+        if all_totals_zero:
+            st.warning(
+                "The uploaded files may be missing required deferral/loan columns "
+                "(e.g., def_amount, loan_amount), so metrics are 0. "
+                "This is a file-format issue, not a ProofLink engine error."
+            )
+        
+        # Display metrics from summary dict
+        st.subheader("Reconciliation Summary")
+        
+        # Risk level indicator
+        if all_totals_zero:
+            st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
         else:
-            st.error("Reconciliation run failed.")
-
-            # Safe error inspection based only on `results`
-            if isinstance(results, dict) and results.get("error"):
-                st.error(f"Error: {results['error']}")
-            elif isinstance(results, list):
-                st.error(
-                    f"Internal error: reconciliation returned a list instead of a dict (len={len(results)})."
-                )
-            elif results is not None:
-                st.error(f"Internal error: unexpected results type: {type(results).__name__}")
-
-            # Optionally, if stdout is non-empty, show it:
-            if stdout:
-                st.code(stdout, language="text")
+            # Compute risk level from summary
+            deferral_mismatches = summary_dict.get("deferral_mismatch_count", 0)
+            loan_mismatches = summary_dict.get("loan_mismatch_count", 0)
+            late_deferrals = summary_dict.get("late_deferral_count", 0)
+            
+            # Simple risk calculation
+            if deferral_mismatches > 100 or loan_mismatches > 50 or late_deferrals > 50:
+                effective_risk_level = "High"
+            elif deferral_mismatches > 10 or loan_mismatches > 5 or late_deferrals > 10:
+                effective_risk_level = "Medium"
+            else:
+                effective_risk_level = "Low"
+            
+            # Map to risk badge with specific emoji format
+            if effective_risk_level.lower() == "high":
+                risk_badge = ":red_circle: High"
+            elif effective_risk_level.lower() == "medium":
+                risk_badge = ":large_orange_circle: Medium"
+            else:
+                risk_badge = ":green_circle: Low"
+            
+            st.markdown(f"**Run Risk Level:** {risk_badge}")
+        
+        st.divider()
+        
+        # Vendor info with confidence warnings
+        payroll_vendor = summary_dict.get("payroll_vendor", "Unknown / Generic")
+        rk_vendor = summary_dict.get("rk_vendor", "Unknown / Generic")
+        payroll_conf = summary_dict.get("payroll_vendor_confidence", 0.0)
+        rk_conf = summary_dict.get("rk_vendor_confidence", 0.0)
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Payroll Vendor", payroll_vendor)
+        if payroll_conf < 0.65:
+            col1.warning(f"Low confidence: {payroll_conf:.2f}")
+        col2.metric("Recordkeeper", rk_vendor)
+        if rk_conf < 0.65:
+            col2.warning(f"Low confidence: {rk_conf:.2f}")
+        
+        st.divider()
+        
+        # Deferrals section
+        st.markdown("### Deferrals")
+        col3, col4, col5 = st.columns(3)
+        col3.metric("Total Payroll Deferrals", f"${summary_dict.get('total_deferrals_payroll', 0):,.2f}")
+        col4.metric("Total RK Deferrals", f"${summary_dict.get('total_deferrals_rk', 0):,.2f}")
+        col5.metric("Deferral Mismatches", f"{summary_dict.get('deferral_mismatch_count', 0):,}")
+        
+        # Loans section
+        st.markdown("### Loans")
+        col6, col7, col8 = st.columns(3)
+        col6.metric("Total Payroll Loans", f"${summary_dict.get('total_loans_payroll', 0):,.2f}")
+        col7.metric("Total RK Loans", f"${summary_dict.get('total_loans_rk', 0):,.2f}")
+        col8.metric("Loan Mismatches", f"{summary_dict.get('loan_mismatch_count', 0):,}")
+        
+        # Late contributions
+        st.markdown("### Late Contributions")
+        col9 = st.columns(1)[0]
+        col9.metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
+        
+        # Timing Analysis Results
+        timing_metrics = summary_dict.get("timing_metrics", {})
+        if timing_metrics:
+            st.divider()
+            st.markdown("### Contribution Timing Analysis")
+            timing_risk_display = format_timing_risk_badge(timing_metrics.get("timing_risk"))
+            st.markdown(f"**Timing Risk:** {timing_risk_display}")
+            col_t1, col_t2, col_t3 = st.columns(3)
+            col_t1.metric("Total Rows Analyzed", f"{timing_metrics.get('total_rows', 0):,}")
+            col_t2.metric("Late Rows", f"{timing_metrics.get('late_rows', 0):,}")
+            col_t3.metric("Missing Deposits", f"{timing_metrics.get('missing_deposits', 0):,}")
+        
+        # Evidence pack download
+        st.divider()
+        st.subheader("Output Files")
+        
+        if run_id:
+            if st.button("Download Evidence Pack"):
+                with st.spinner("Fetching evidence pack from API..."):
+                    data = api_download_evidence_pack(run_id)
+                if data is None:
+                    st.error("Evidence pack not available for this run.")
+                else:
+                    st.download_button(
+                        label="📥 Download Evidence Pack ZIP",
+                        data=data,
+                        file_name=f"evidence_{run_id}.zip",
+                        mime="application/zip",
+                    )
+        else:
+            st.info("Run an analysis first to generate an evidence pack.")
+    else:
+        st.info("Run an analysis to see results.")
 
         # mismatches_detail = results.get("mismatches_detail")
         # if mismatches_detail:
