@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
-from vendor_detection import detect_vendors
+from vendor_detection import detect_vendors as detect_vendors_unified
 
 
 def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -880,11 +880,9 @@ def run_timing_analysis(
     raw_rk = apply_column_aliases(raw_rk, role="rk")
 
     # Use the unified vendor detection module (single source of truth)
-    vendor_detection_result = detect_vendors(
+    vendor_detection_result = detect_vendors_unified(
         payroll_df=raw_payroll,
         rk_df=raw_rk,
-        payroll_vendor_hint=None,
-        rk_vendor_hint=None,
     )
     
     payroll_vendor = vendor_detection_result.payroll_vendor
