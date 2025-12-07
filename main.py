@@ -17,9 +17,10 @@ import pandas as pd
 from vendors import (
     PAYROLL_VENDOR_SIGNATURES,
     RK_VENDOR_SIGNATURES,
-    detect_vendor_with_confidence,
     apply_vendor_column_mapping,
 )
+
+from vendor_detection import detect_vendors, VendorDetectionResult
 
 from contribution_timing_analyzer_v2 import run_timing_analysis
 
@@ -329,22 +330,22 @@ def run_reconciliation(
     # =========================
     # Vendor detection with confidence
     # =========================
-    payroll_vendor, payroll_confidence = detect_vendor_with_confidence(
-        payroll_df, PAYROLL_VENDOR_SIGNATURES, payroll_vendor_hint
-    )
-    rk_vendor, rk_confidence = detect_vendor_with_confidence(
-        rk_df, RK_VENDOR_SIGNATURES, rk_vendor_hint
+    vendor_detection_result = detect_vendors(
+        payroll_df=payroll_df,
+        rk_df=rk_df,
+        payroll_vendor_hint=payroll_vendor_hint,
+        rk_vendor_hint=rk_vendor_hint,
     )
     
-    # If hint provided, use it (confidence still calculated)
-    if payroll_vendor_hint:
-        payroll_vendor = payroll_vendor_hint
-    if rk_vendor_hint:
-        rk_vendor = rk_vendor_hint
+    # Extract values for use in the rest of the function
+    payroll_vendor = vendor_detection_result.payroll_vendor
+    payroll_confidence = vendor_detection_result.payroll_confidence
+    rk_vendor = vendor_detection_result.rk_vendor
+    rk_confidence = vendor_detection_result.rk_confidence
 
     print("\n=== Vendor Detection ===")
-    print(f"Detected payroll vendor:     {payroll_vendor or 'Unknown / Generic'} (confidence: {payroll_confidence:.2f})")
-    print(f"Detected recordkeeper:       {rk_vendor or 'Unknown / Generic'} (confidence: {rk_confidence:.2f})")
+    print(f"Detected payroll vendor:     {payroll_vendor} (confidence: {payroll_confidence:.2f})")
+    print(f"Detected recordkeeper:       {rk_vendor} (confidence: {rk_confidence:.2f})")
     
     if payroll_confidence < 0.65 and not payroll_vendor_hint:
         print(f"[WARN] Low confidence ({payroll_confidence:.2f}) for payroll vendor detection. Manual verification recommended.")
@@ -662,12 +663,12 @@ def run_reconciliation(
 
     # Use the same values that are printed in the console output
     # This ensures vendor_detection dict matches what's displayed in === Vendor Detection ===
-    # Use the exact same expression as the print statements above (line 346-347)
+    # Use the VendorDetectionResult that was already computed above
     vendor_detection = {
-        "payroll_vendor": payroll_vendor or "Unknown / Generic",
-        "rk_vendor": rk_vendor or "Unknown / Generic",
-        "payroll_vendor_confidence": payroll_confidence,
-        "rk_vendor_confidence": rk_confidence,
+        "payroll_vendor": vendor_detection_result.payroll_vendor,
+        "rk_vendor": vendor_detection_result.rk_vendor,
+        "payroll_vendor_confidence": vendor_detection_result.payroll_confidence,
+        "rk_vendor_confidence": vendor_detection_result.rk_confidence,
     }
 
     # =========================
