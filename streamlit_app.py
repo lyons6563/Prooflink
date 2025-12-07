@@ -244,52 +244,42 @@ def load_run_history() -> list[dict]:
 
 def compute_run_risk_level(summary: Dict[str, Any], results_dict: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
     """
-    Compute run risk level and label.
+    Compute run risk level and label from the summary dict.
 
-    Inputs:
-    - summary: dict returned from API, may contain:
-        - "timing_metrics": { "total_rows", "late_rows", "missing_deposits", "timing_risk" }
-        - "mismatches": { "deferral_count", "loan_count", "only_in_payroll_count", "only_in_recordkeeper_count" }
-    
-    Returns:
-        (risk_icon, risk_label) tuple where icon is like ":red_circle:", ":orange_circle:", ":green_circle:"
+    Uses:
+    - summary["timing_metrics"]:
+        - "late_rows"
+        - "missing_deposits"
+        - "timing_risk"
+    - summary["deferral_mismatch_count"]
+    - summary["loan_mismatch_count"]
+    - summary["late_deferral_count"]
     """
     timing_metrics = summary.get("timing_metrics") or {}
-    mismatches = summary.get("mismatches") or {}
-    
-    # If mismatches not in summary, try to get from results_dict
-    if not mismatches and results_dict:
-        mismatches = results_dict.get("mismatches") or {}
-    
     timing_risk = (timing_metrics.get("timing_risk") or "").lower()
     missing_deposits = timing_metrics.get("missing_deposits", 0) or 0
     late_rows = timing_metrics.get("late_rows", 0) or 0
-    
-    deferral_mismatches = mismatches.get("deferral_count", 0) or 0
-    loan_mismatches = mismatches.get("loan_count", 0) or 0
-    
-    # Also check summary directly for mismatch counts if not in mismatches dict
-    if deferral_mismatches == 0:
-        deferral_mismatches = summary.get("deferral_mismatch_count", 0) or 0
-    if loan_mismatches == 0:
-        loan_mismatches = summary.get("loan_mismatch_count", 0) or 0
-    
+
+    deferral_mismatches = summary.get("deferral_mismatch_count", 0) or 0
+    loan_mismatches = summary.get("loan_mismatch_count", 0) or 0
+    late_deferral_count = summary.get("late_deferral_count", 0) or 0
+
     # Default
     risk_icon = ":green_circle:"
     risk_label = "Low"
-    
-    # HIGH RISK conditions:
+
+    # HIGH RISK:
     # - any missing deposits
-    # - timing_risk explicitly "high"
-    # - substantial mismatches
+    # - or explicit timing_risk "high"
     if missing_deposits > 0 or timing_risk == "high":
         risk_icon = ":red_circle:"
         risk_label = "High"
-    elif late_rows > 0 or deferral_mismatches > 0 or loan_mismatches > 0:
-        # Medium if late rows or mismatches but no missing deposits/high timing flag
+    # MEDIUM RISK:
+    # - late rows or mismatches or late deferrals, but no missing deposits/high flag
+    elif late_rows > 0 or deferral_mismatches > 0 or loan_mismatches > 0 or late_deferral_count > 0:
         risk_icon = ":orange_circle:"
         risk_label = "Medium"
-    
+
     return risk_icon, risk_label
 
 
