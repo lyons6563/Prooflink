@@ -459,123 +459,54 @@ def run_prooflink_analysis(payroll_file, rk_file, output_dir: Path = None, late_
 
 
 def render_contribution_timing_tab():
-    st.header("ProofLink Analysis")
-
+    st.header("Contribution Timing Analysis")
+    
     st.markdown(
-        "Upload exactly two CSV files to run the contribution timing analyzer end-to-end."
+        "View contribution timing metrics from the most recent reconciliation run. "
+        "Run an analysis in the Reconciliation tab to see timing data here."
     )
-
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        payroll_file = st.file_uploader(
-            "Payroll CSV",
-            type=["csv"],
-            key="timing_payroll",
-        )
-
-    with col_right:
-        rk_file = st.file_uploader(
-            "Recordkeeper CSV",
-            type=["csv"],
-            key="timing_rk",
-        )
-
-    late_threshold = st.number_input(
-        "Late threshold (days)",
-        min_value=1,
-        max_value=30,
-        value=5,
-        step=1,
-        key="timing_late_threshold"
-    )
-
-    run_button = st.button("Run ProofLink Analysis", type="primary")
-
-    if not run_button:
-        return
-
-    if payroll_file is None or rk_file is None:
-        st.warning("Please upload both Payroll CSV and Recordkeeper CSV files.")
-        return
-
-    # Run the analysis
-    with st.spinner("Running ProofLink Analysis..."):
-        success, stdout, stderr = run_prooflink_analysis(payroll_file, rk_file, late_threshold=late_threshold)
-
-    # Display run status
-    if success:
-        st.success("ProofLink analysis completed successfully.")
-        
-        # Parse the analyzer output
-        metrics = parse_analyzer_output(stdout)
-        
-        # Display metrics if we successfully parsed them
-        if any(v is not None for v in metrics.values()):
-            st.subheader("Analysis Summary")
-            
-            # Vendor detection metrics
-            if metrics["payroll_vendor"] or metrics["rk_vendor"]:
-                col1, col2 = st.columns(2)
-                if metrics["payroll_vendor"]:
-                    col1.metric("Payroll Vendor", metrics["payroll_vendor"])
-                if metrics["rk_vendor"]:
-                    col2.metric("Recordkeeper", metrics["rk_vendor"])
-            
-            # Contribution timing metrics
-            if metrics["total_rows"] is not None or metrics["late_contributions"] is not None or metrics["missing_deposits"] is not None:
-                st.divider()
-                
-                # Display Timing Risk prominently at the top
-                timing_risk_raw = metrics.get("timing_risk")
-                timing_risk_display = format_timing_risk_badge(timing_risk_raw)
-                st.markdown(f"**Timing Risk:** {timing_risk_display}")
-                
-                col3, col4, col5 = st.columns(3)
-                
-                if metrics["total_rows"] is not None:
-                    col3.metric("Total Payroll Rows", f"{metrics['total_rows']:,}")
-                
-                if metrics["late_contributions"] is not None and metrics["late_threshold"] is not None:
-                    col4.metric(
-                        f"Late Contributions (> {metrics['late_threshold']} days)",
-                        f"{metrics['late_contributions']:,}"
-                    )
-                elif metrics["late_contributions"] is not None:
-                    col4.metric("Late Contributions", f"{metrics['late_contributions']:,}")
-                
-                if metrics["missing_deposits"] is not None:
-                    col5.metric("Missing Deposits", f"{metrics['missing_deposits']:,}")
-        
-        # Display raw output
-        st.subheader("Analyzer Output")
-        st.code(stdout, language="text")
+    
+    # Get summary from session state (set by Reconciliation tab)
+    summary = st.session_state.get("current_summary") or {}
+    timing_metrics = summary.get("timing_metrics") or {}
+    
+    st.subheader("Contribution Timing Analysis")
+    
+    if not timing_metrics:
+        st.info("No timing metrics available for this run. Run a new analysis in the Reconciliation tab or verify that timing analysis is enabled.")
     else:
-        st.error("ProofLink analysis failed")
-        if stderr:
-            st.code(stderr, language="text")
-        else:
-            st.error("No error details available.")
+        timing_risk = timing_metrics.get("timing_risk", "N/A")
+        total_rows = timing_metrics.get("total_rows", 0)
+        late_rows = timing_metrics.get("late_rows", 0)
+        missing_deposits = timing_metrics.get("missing_deposits", 0)
+        
+        # Display Timing Risk prominently
+        timing_risk_display = format_timing_risk_badge(timing_risk)
+        st.markdown(f"**Timing Risk:** {timing_risk_display}")
+        
+        # Simple metric display
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Total Rows Analyzed", f"{total_rows:,}")
+            st.metric("Late Rows", f"{late_rows:,}")
+        
+        with col2:
+            st.metric("Missing Deposits", f"{missing_deposits:,}")
+        
+        # Show additional context if available
+        if summary.get("plan_name"):
+            st.info(f"Plan: {summary.get('plan_name')}")
+        
+        # Optionally show raw JSON for debugging
+        with st.expander("Raw Timing Metrics"):
+            st.json(timing_metrics)
+        
+        # Show full summary if user wants to see it
+        with st.expander("View Full Summary"):
+            st.json(summary)
 
-    # Check for output files
-    output_dir = BASE_DIR.parent / "data" / "processed"
-    late_contributions_path = output_dir / "late_contributions.csv"
 
-    if late_contributions_path.exists():
-        st.subheader("Output Files")
-        st.info(f"Late contributions CSV available at: {late_contributions_path}")
-
-        # Provide download link
-        try:
-            with open(late_contributions_path, "rb") as f:
-                st.download_button(
-                    label="📥 Download late_contributions.csv",
-                    data=f.read(),
-                    file_name="late_contributions.csv",
-                    mime="text/csv"
-                )
-        except Exception as e:
-            st.error(f"Could not read output file: {e}")
 def classify_run_risk(summary: Dict[str, Any]) -> str:
     """
     Simple risk classifier based on mismatch + late counts.
