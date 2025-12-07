@@ -244,38 +244,53 @@ def load_run_history() -> list[dict]:
 
 def compute_run_risk_level(summary: Dict[str, Any], results_dict: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
     """
-    Compute the risk level and label for a run based on the summary dict
-    returned by the API.
+    Compute run risk level and label.
+
+    Inputs:
+    - summary: dict returned from API, may contain:
+        - "timing_metrics": { "total_rows", "late_rows", "missing_deposits", "timing_risk" }
+        - "mismatches": { "deferral_count", "loan_count", "only_in_payroll_count", "only_in_recordkeeper_count" }
     
-    Return (label, color) based on mismatch/late counts and coverage gaps.
-    
-    Rules:
-    - Low: all counts == 0
-    - Medium: total issues between 1 and 20
-    - High: total issues > 20 OR coverage gaps > 0
+    Returns:
+        (risk_icon, risk_label) tuple where icon is like ":red_circle:", ":orange_circle:", ":green_circle:"
     """
-    # Check for coverage gaps first (forces High risk if present)
-    if results_dict:
-        mismatches = results_dict.get("mismatches", {})
-        only_in_payroll = mismatches.get("only_in_payroll_count", 0)
-        only_in_rk = mismatches.get("only_in_recordkeeper_count", 0)
-        coverage_gaps = only_in_payroll + only_in_rk
-        
-        if coverage_gaps > 0:
-            return ("High", "red")
+    timing_metrics = summary.get("timing_metrics") or {}
+    mismatches = summary.get("mismatches") or {}
     
-    total_issues = (
-        summary.get("deferral_mismatch_count", 0)
-        + summary.get("loan_mismatch_count", 0)
-        + summary.get("late_deferral_count", 0)
-    )
+    # If mismatches not in summary, try to get from results_dict
+    if not mismatches and results_dict:
+        mismatches = results_dict.get("mismatches") or {}
     
-    if total_issues == 0:
-        return ("Low", "green")
-    elif 1 <= total_issues <= 20:
-        return ("Medium", "orange")
-    else:
-        return ("High", "red")
+    timing_risk = (timing_metrics.get("timing_risk") or "").lower()
+    missing_deposits = timing_metrics.get("missing_deposits", 0) or 0
+    late_rows = timing_metrics.get("late_rows", 0) or 0
+    
+    deferral_mismatches = mismatches.get("deferral_count", 0) or 0
+    loan_mismatches = mismatches.get("loan_count", 0) or 0
+    
+    # Also check summary directly for mismatch counts if not in mismatches dict
+    if deferral_mismatches == 0:
+        deferral_mismatches = summary.get("deferral_mismatch_count", 0) or 0
+    if loan_mismatches == 0:
+        loan_mismatches = summary.get("loan_mismatch_count", 0) or 0
+    
+    # Default
+    risk_icon = ":green_circle:"
+    risk_label = "Low"
+    
+    # HIGH RISK conditions:
+    # - any missing deposits
+    # - timing_risk explicitly "high"
+    # - substantial mismatches
+    if missing_deposits > 0 or timing_risk == "high":
+        risk_icon = ":red_circle:"
+        risk_label = "High"
+    elif late_rows > 0 or deferral_mismatches > 0 or loan_mismatches > 0:
+        # Medium if late rows or mismatches but no missing deposits/high timing flag
+        risk_icon = ":orange_circle:"
+        risk_label = "Medium"
+    
+    return risk_icon, risk_label
 
 
 def parse_reconciliation_output(stdout: str) -> dict:
