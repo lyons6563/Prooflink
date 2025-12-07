@@ -4,13 +4,14 @@ ProofLink FastAPI Backend
 A minimal REST API that wraps the ProofLink reconciliation engine.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from uuid import uuid4
 from pathlib import Path
+from typing import Optional
 
 from main import EngineConfig, run_prooflink_engine, EngineResult
-from db import init_db, insert_run, get_run
+from db import init_db, insert_run, get_run, list_runs
 
 app = FastAPI(title="ProofLink API", version="0.1")
 
@@ -102,6 +103,42 @@ async def create_run(
             status_code=500,
             detail=f"Error processing files: {str(e)}"
         )
+
+
+@app.get("/api/v1/runs")
+def get_run_list(limit: Optional[int] = Query(50, ge=1, le=200)):
+    """
+    Return a list of recent runs for Run History.
+
+    For now this is global (no auth / no org scoping).
+    """
+    # Basic guardrail
+    if limit is None or limit <= 0:
+        limit = 50
+    if limit > 200:
+        limit = 200
+
+    records = list_runs(limit=limit)
+
+    # Shape for API response: lighter wrapper over DB records
+    return {
+        "count": len(records),
+        "items": [
+            {
+                "run_id": r["id"],
+                "status": r["status"],
+                "plan_name": r["plan_name"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+                "payroll_filename": r["payroll_filename"],
+                "rk_filename": r["rk_filename"],
+                "has_evidence_pack": r["evidence_pack_path"] is not None and r["evidence_pack_path"] != "",
+                # summary is included for now; we can trim or expand later
+                "summary": r["summary"],
+            }
+            for r in records
+        ],
+    }
 
 
 @app.get("/api/v1/runs/{run_id}")

@@ -8,7 +8,7 @@ import sqlite3
 import json
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 DB_PATH = "prooflink_runs.db"
 
@@ -159,4 +159,73 @@ def get_run(run_id: str) -> Optional[Dict[str, Any]]:
         "evidence_pack_path": evidence_pack_path,
         "error_message": error_message,
     }
+
+
+def list_runs(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Return a list of recent runs ordered by created_at descending.
+
+    Each item is a dict similar to get_run(), but lighter-weight if you prefer.
+    For now, include the same fields as get_run().
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                id,
+                created_at,
+                updated_at,
+                status,
+                plan_name,
+                user_id,
+                payroll_filename,
+                rk_filename,
+                summary_json,
+                manifest_json,
+                evidence_pack_path,
+                error_message
+            FROM runs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    results: List[Dict[str, Any]] = []
+    for row in rows:
+        (
+            id_,
+            created_at,
+            updated_at,
+            status,
+            plan_name,
+            user_id,
+            payroll_filename,
+            rk_filename,
+            summary_json,
+            manifest_json,
+            evidence_pack_path,
+            error_message,
+        ) = row
+
+        results.append(
+            {
+                "id": id_,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "status": status,
+                "plan_name": plan_name,
+                "user_id": user_id,
+                "payroll_filename": payroll_filename,
+                "rk_filename": rk_filename,
+                "summary": json.loads(summary_json),
+                "manifest": json.loads(manifest_json) if manifest_json is not None else None,
+                "evidence_pack_path": evidence_pack_path,
+                "error_message": error_message,
+            }
+        )
+
+    return results
 
