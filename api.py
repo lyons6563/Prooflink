@@ -10,7 +10,7 @@ from uuid import uuid4
 from pathlib import Path
 
 from main import EngineConfig, run_prooflink_engine, EngineResult
-from db import init_db, insert_run, get_run as get_run_from_db
+from db import init_db, insert_run, get_run
 
 app = FastAPI(title="ProofLink API", version="0.1")
 
@@ -112,7 +112,7 @@ def get_run_details(run_id: str):
     Returns:
         JSON with run_id, summary, status, and evidence_pack_available
     """
-    record = get_run_from_db(run_id)
+    record = get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Run not found")
     
@@ -122,7 +122,7 @@ def get_run_details(run_id: str):
         "plan_name": record["plan_name"],
         "summary": record["summary"],
         "manifest": record["manifest"],
-        "evidence_pack_available": record["evidence_pack_path"] is not None and record["evidence_pack_path"] != "",
+        "evidence_pack_available": record["evidence_pack_path"] is not None,
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
     }
@@ -136,7 +136,7 @@ def download_evidence(run_id: str):
     Returns:
         ZIP file download
     """
-    record = get_run_from_db(run_id)
+    record = get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Run not found")
     
