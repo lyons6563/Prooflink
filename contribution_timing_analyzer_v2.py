@@ -7,8 +7,61 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
-# Import normalization from main.py
-from main import normalize_column_names
+
+def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize column names to standardize deferral/roth column variants.
+    
+    Maps various column name variants to standard names:
+    - Deferral variants → "EE Deferral $"
+    - Roth variants → "EE Roth $"
+    
+    Case-insensitive and whitespace-normalized.
+    Does not modify loan_amount or other columns.
+    """
+    df = df.copy()
+    
+    # Normalize column names: lowercase, strip whitespace, normalize whitespace to underscores
+    normalized_cols = {}
+    for col in df.columns:
+        # Lowercase, strip, and replace any whitespace (spaces, tabs, etc.) with underscores
+        normalized = re.sub(r'\s+', '_', col.strip().lower())
+        normalized_cols[col] = normalized
+    
+    # Deferral column variants
+    deferral_variants = {
+        "def_amount",
+        "employee_deferral",
+        "deferral",
+        "ee_deferral",
+        "contribution_amount",
+        "pretax",
+        "employee_pre_tax",
+    }
+    
+    # Roth column variants
+    roth_variants = {
+        "roth_amount",
+        "roth_deferral",
+        "roth",
+        "roth_contribution",
+    }
+    
+    # Build rename mapping
+    rename_map = {}
+    for original_col in df.columns:
+        normalized = normalized_cols[original_col]
+        
+        if normalized in deferral_variants:
+            rename_map[original_col] = "EE Deferral $"
+        elif normalized in roth_variants:
+            rename_map[original_col] = "EE Roth $"
+        # loan_amount and other columns are left unchanged
+    
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    
+    return df
 
 
 def classify_timing_risk(
