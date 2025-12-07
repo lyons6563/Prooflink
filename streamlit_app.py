@@ -15,6 +15,9 @@ import requests
 # API client configuration
 API_BASE_URL = "http://127.0.0.1:8000"
 
+# Simple local dev password (no secrets/env vars needed)
+APP_DEV_PASSWORD = "prooflink"
+
 
 def api_create_run(
     payroll_bytes: bytes,
@@ -81,47 +84,23 @@ def format_timing_risk_badge(timing_risk: str) -> str:
     return "⚪ N/A"
 
 
-def check_password():
-    """Simple password gate using Streamlit secrets."""
-    def password_entered():
-        # Determine the expected app password
-        try:
-            expected_password = st.secrets["APP_PASSWORD"]
-        except Exception:
-            # Fallback for local dev when no secrets.toml is configured
-            expected_password = "prooflink"
-            print("[WARN] APP_PASSWORD not found in st.secrets. Using default dev password 'prooflink'.")
-
-        if st.session_state.get("password") == expected_password:
-            st.session_state["password_correct"] = True
-            # don't keep the raw password in session
-            try:
-                del st.session_state["password"]
-            except KeyError:
-                pass
-        else:
-            st.session_state["password_correct"] = False
-
+def check_password() -> bool:
+    """Simple local dev password gate."""
     if "password_correct" not in st.session_state:
-        st.text_input(
-            "Enter access password",
-            type="password",
-            on_change=password_entered,
-            key="password",
-        )
-        return False
+        st.session_state["password_correct"] = False
 
     if not st.session_state["password_correct"]:
-        st.text_input(
-            "Enter access password",
-            type="password",
-            on_change=password_entered,
-            key="password",
-        )
-        st.error("Incorrect password.")
-        return False
+        st.sidebar.header("Login")
+        password = st.sidebar.text_input("Password", type="password")
 
-    return True
+        if password:
+            if password == APP_DEV_PASSWORD:
+                st.session_state["password_correct"] = True
+            else:
+                st.sidebar.error("Incorrect password")
+                st.session_state["password_correct"] = False
+
+    return st.session_state["password_correct"]
 
 
 # ---------- Paths / Directories ----------
