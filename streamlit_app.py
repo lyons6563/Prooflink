@@ -962,7 +962,6 @@ def render_reconciliation_tab():
         st.divider()
         st.markdown("### Contribution Timing Analysis")
         timing_metrics = summary_dict.get("timing_metrics", {})
-        secure20_exception_count = summary_dict.get("secure20_exception_count", 0)
         
         if not timing_metrics:
             st.write("No timing metrics available for this run.")
@@ -982,15 +981,37 @@ def render_reconciliation_tab():
         st.divider()
         st.markdown("### Secure 2.0 Catch-Up Exceptions")
         
-        if secure20_exception_count == 0:
-            st.write("No Secure 2.0 catch-up violations detected.")
+        # Read Secure 2.0 data from summary
+        secure_exceptions = summary_dict.get("secure20_exceptions") or []
+        secure_exception_count = summary_dict.get("secure20_exception_count", len(secure_exceptions))
+        secure_files = summary_dict.get("secure20_files") or {}
+        secure_csv_path = secure_files.get("exceptions_csv")
+        
+        if not secure_exceptions:
+            st.write("No Secure 2.0 catch-up violations detected for this run.")
         else:
-            st.write(f"{secure20_exception_count} Secure 2.0 violation(s) detected (HCE pre-tax catch-up).")
+            st.write(f"{secure_exception_count} Secure 2.0 violation(s) detected (HCE pre-tax catch-up or related issues).")
             
-            # Optionally show details
-            secure20_exceptions = summary_dict.get("secure20_exceptions") or []
-            with st.expander("View Secure 2.0 exception details"):
-                st.json(secure20_exceptions)
+            # Build a table-friendly structure
+            rows = []
+            for ex in secure_exceptions:
+                rows.append({
+                    "Employee ID": ex.get("employee_id"),
+                    "Pay Date": ex.get("pay_date"),
+                    "Pre-tax Catch-Up": ex.get("catchup_pretax"),
+                    "Roth Catch-Up": ex.get("catchup_roth"),
+                    "Issue Code": ex.get("issue_code"),
+                })
+            
+            if rows:
+                df = pd.DataFrame(rows)
+                st.dataframe(df, use_container_width=True)
+            
+            if secure_csv_path:
+                st.caption(f"Secure 2.0 exceptions CSV: {secure_csv_path}")
+            
+            with st.expander("View Secure 2.0 exception details (raw)", expanded=False):
+                st.json(secure_exceptions)
         
         # Evidence pack download
         st.divider()
