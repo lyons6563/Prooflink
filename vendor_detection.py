@@ -30,6 +30,7 @@ def detect_vendors(
     rk_df: pd.DataFrame,
     payroll_vendor_hint: Optional[str] = None,
     rk_vendor_hint: Optional[str] = None,
+    **kwargs,
 ) -> VendorDetectionResult:
     """
     Run vendor detection for both payroll and recordkeeper data.
