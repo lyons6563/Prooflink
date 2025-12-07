@@ -896,27 +896,32 @@ def render_reconciliation_tab():
             st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
         else:
             # Compute risk level from summary
-            deferral_mismatches = summary_dict.get("deferral_mismatch_count", 0)
-            loan_mismatches = summary_dict.get("loan_mismatch_count", 0)
-            late_deferrals = summary_dict.get("late_deferral_count", 0)
+            risk_icon, risk_label = compute_run_risk_level(summary_dict, results_dict)
             
-            # Simple risk calculation
-            if deferral_mismatches > 100 or loan_mismatches > 50 or late_deferrals > 50:
-                effective_risk_level = "High"
-            elif deferral_mismatches > 10 or loan_mismatches > 5 or late_deferrals > 10:
-                effective_risk_level = "Medium"
-            else:
-                effective_risk_level = "Low"
+            # DEBUG: Risk inputs
+            timing_metrics = summary_dict.get("timing_metrics") or {}
+            debug_missing_deposits = timing_metrics.get("missing_deposits", 0)
+            debug_timing_risk = timing_metrics.get("timing_risk", "N/A")
+            debug_late_rows = timing_metrics.get("late_rows", 0)
             
-            # Map to risk badge with specific emoji format
-            if effective_risk_level.lower() == "high":
-                risk_badge = ":red_circle: High"
-            elif effective_risk_level.lower() == "medium":
-                risk_badge = ":large_orange_circle: Medium"
-            else:
-                risk_badge = ":green_circle: Low"
+            debug_deferral_mismatches = summary_dict.get("deferral_mismatch_count", 0)
+            debug_loan_mismatches = summary_dict.get("loan_mismatch_count", 0)
+            debug_late_deferral_count = summary_dict.get("late_deferral_count", 0)
             
-            st.markdown(f"**Run Risk Level:** {risk_badge}")
+            with st.expander("DEBUG: Risk inputs", expanded=False):
+                st.write({
+                    "timing_metrics": timing_metrics,
+                    "missing_deposits": debug_missing_deposits,
+                    "timing_risk": debug_timing_risk,
+                    "late_rows": debug_late_rows,
+                    "deferral_mismatch_count": debug_deferral_mismatches,
+                    "loan_mismatch_count": debug_loan_mismatches,
+                    "late_deferral_count": debug_late_deferral_count,
+                    "risk_icon": risk_icon,
+                    "risk_label": risk_label,
+                })
+            
+            st.markdown(f"**Run Risk Level:** {risk_icon} {risk_label}")
         
         st.divider()
         
