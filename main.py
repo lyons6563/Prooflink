@@ -358,42 +358,39 @@ def run_prooflink_engine(
     mismatches = reconciliation_results.get("mismatches", {})
     timing = reconciliation_results.get("timing", {})
     
-    # Get real timing_metrics - prioritize loading from timing_summary.json file (source of truth)
+    # Get real timing_metrics - load from timing_summary.json file (source of truth)
     real_timing_metrics: Dict[str, Any] = {}
     
-    # First, try to load from timing_summary.json if the path is available
+    # Get the timing_summary path from reconciliation_results
     timing_summary_path = reconciliation_results.get("timing_summary", "")
+    
+    # Try to load from the timing summary JSON file
     if timing_summary_path:
         try:
-            timing_summary_path_obj = Path(timing_summary_path)
-            if timing_summary_path_obj.exists():
-                with timing_summary_path_obj.open("r", encoding="utf-8") as f:
-                    ts = json.load(f)
-                if isinstance(ts, dict):
-                    real_timing_metrics = {
-                        "total_rows": ts.get("total_rows", 0),
-                        "late_rows": ts.get("late_rows", 0),
-                        "missing_deposits": ts.get("missing_deposits", 0),
-                        "timing_risk": ts.get("timing_risk") or ts.get("risk_level", "N/A"),
-                    }
+            with open(timing_summary_path, "r", encoding="utf-8") as f:
+                ts = json.load(f)
+            if isinstance(ts, dict):
+                real_timing_metrics = {
+                    "total_rows": ts.get("total_rows", 0),
+                    "late_rows": ts.get("late_rows", 0),
+                    "missing_deposits": ts.get("missing_deposits", 0),
+                    "timing_risk": ts.get("timing_risk", "N/A"),
+                }
         except Exception:
-            # Swallow and fall back to in-memory dict or defaults below
+            # If we fail to read or parse, we fall back below
             real_timing_metrics = {}
     
-    # If we don't have metrics from the JSON file, try the in-memory timing_metrics dict
-    if not real_timing_metrics:
-        timing_metrics_raw = reconciliation_results.get("timing_metrics")
-        if isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
-            # Use the real timing_metrics dict directly (the one that's printed in "Run complete. Key outputs:")
-            # This is the actual dict with real values like {'total_rows': 20, 'late_rows': 0, 'missing_deposits': 20, 'timing_risk': 'High'}
-            real_timing_metrics = timing_metrics_raw.copy()
-            # Only fill in missing keys with defaults (don't overwrite real values)
-            real_timing_metrics.setdefault("total_rows", 0)
-            real_timing_metrics.setdefault("late_rows", 0)
-            real_timing_metrics.setdefault("missing_deposits", 0)
-            real_timing_metrics.setdefault("timing_risk", "N/A")
+    # If an in-memory timing_metrics dict already exists and is non-empty, prefer that
+    timing_metrics_raw = reconciliation_results.get("timing_metrics")
+    if not real_timing_metrics and isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
+        real_timing_metrics = timing_metrics_raw.copy()
+        # Ensure all keys exist
+        real_timing_metrics.setdefault("total_rows", 0)
+        real_timing_metrics.setdefault("late_rows", 0)
+        real_timing_metrics.setdefault("missing_deposits", 0)
+        real_timing_metrics.setdefault("timing_risk", "N/A")
     
-    # Final fallback: only use defaults if timing analysis genuinely didn't run
+    # Final fallback if nothing was loaded
     if not real_timing_metrics:
         real_timing_metrics = {
             "total_rows": 0,
