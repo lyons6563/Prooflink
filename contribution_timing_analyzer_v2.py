@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
+from vendor_detection import detect_vendors
+
 
 def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -877,20 +879,22 @@ def run_timing_analysis(
     raw_payroll = apply_column_aliases(raw_payroll, role="payroll")
     raw_rk = apply_column_aliases(raw_rk, role="rk")
 
-    payroll_vendor, rk_vendor = detect_vendors_from_files(
+    # Use the unified vendor detection module (single source of truth)
+    vendor_detection_result = detect_vendors(
         payroll_df=raw_payroll,
         rk_df=raw_rk,
-        payroll_path=payroll_path,
-        rk_path=rk_path,
+        payroll_vendor_hint=None,
+        rk_vendor_hint=None,
     )
     
-    # Default confidence to 0.0 for CLI (no confidence scoring in timing analyzer)
-    payroll_confidence = 0.0
-    rk_confidence = 0.0
+    payroll_vendor = vendor_detection_result.payroll_vendor
+    payroll_confidence = vendor_detection_result.payroll_confidence
+    rk_vendor = vendor_detection_result.rk_vendor
+    rk_confidence = vendor_detection_result.rk_confidence
 
     print("=== Vendor Detection ===")
-    print(f"Detected payroll vendor:     {payroll_vendor}")
-    print(f"Detected recordkeeper:       {rk_vendor}")
+    print(f"Detected payroll vendor:     {payroll_vendor} (confidence: {payroll_confidence:.2f})")
+    print(f"Detected recordkeeper:       {rk_vendor} (confidence: {rk_confidence:.2f})")
     print()
 
     payroll = normalize_payroll(raw_payroll, payroll_vendor, payroll_confidence)
