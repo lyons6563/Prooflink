@@ -502,9 +502,10 @@ def classify_run_risk(summary: Dict[str, Any]) -> str:
 def render_run_summary(summary: Dict[str, Any]) -> None:
     st.subheader("Run Summary")
 
-    risk = classify_run_risk(summary)
-    risk_icon = {"High": "🔴", "Medium": "🟠", "Low": "🟢"}.get(risk, "⚪")
-    st.markdown(f"**Run Risk Level:** {risk_icon} {risk}")
+    # Use compute_run_risk_level for consistency
+    results_dict = {}  # Empty results_dict for this function
+    risk_icon, risk_label = compute_run_risk_level(summary, results_dict)
+    st.markdown(f"**Run Risk Level:** {risk_icon} {risk_label}")
 
     col1, col2, col3 = st.columns(3)
 
@@ -884,18 +885,15 @@ def render_reconciliation_tab():
         # Display metrics from summary dict
         st.subheader("Reconciliation Summary")
         
-        # Get summary from session state for debug view
-        summary = st.session_state.get("current_summary") or {}
-        
         # DEBUG: Raw summary dict
         with st.expander("DEBUG: Raw summary dict"):
-            st.json(summary)
+            st.json(summary_dict)
         
-        # Risk level indicator
+        # Risk level indicator - use compute_run_risk_level for all cases
         if all_totals_zero:
             st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
         else:
-            # Compute risk level from summary
+            # Compute risk level from summary - this is the SINGLE source of truth
             risk_icon, risk_label = compute_run_risk_level(summary_dict, results_dict)
             
             # DEBUG: Risk inputs
