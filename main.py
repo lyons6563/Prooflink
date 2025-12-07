@@ -357,7 +357,28 @@ def run_prooflink_engine(
     totals = reconciliation_results.get("totals", {})
     mismatches = reconciliation_results.get("mismatches", {})
     timing = reconciliation_results.get("timing", {})
-    timing_metrics = reconciliation_results.get("timing_metrics", {})
+    timing_metrics_raw = reconciliation_results.get("timing_metrics", {})
+    
+    # Normalize timing_metrics to ensure required keys exist
+    if isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
+        # Use existing timing_metrics if it has the required keys
+        tm = timing_metrics_raw.copy()
+    else:
+        # Start with empty dict if timing_metrics is missing or invalid
+        tm = {}
+    
+    # Ensure all required keys exist with defaults
+    tm.setdefault("total_rows", 0)
+    tm.setdefault("late_rows", 0)
+    tm.setdefault("missing_deposits", 0)
+    tm.setdefault("timing_risk", "N/A")
+    timing_metrics = tm
+    
+    # Extract Secure 2.0 exceptions
+    secure20_exceptions_raw = reconciliation_results.get("secure20_exceptions", [])
+    secure20_exceptions = secure20_exceptions_raw if isinstance(secure20_exceptions_raw, list) else []
+    secure20_exception_count = len(secure20_exceptions)
+    secure20_exceptions_csv = reconciliation_results.get("secure20_exceptions_csv")
     
     summary = {
         "plan_name": config.plan_name,
@@ -376,7 +397,7 @@ def run_prooflink_engine(
         "run_id": run_id,
     }
     
-    # Always include timing_metrics (even if empty dict from failed timing analysis)
+    # Always include timing_metrics with normalized values
     summary["timing_metrics"] = timing_metrics
     
     # Include timing dict if it has additional fields beyond late_deferral_count
@@ -390,6 +411,16 @@ def run_prooflink_engine(
         summary["timing_files"] = {
             "timing_summary_json": timing_summary_path if timing_summary_path else None,
             "late_contributions_csv": late_contributions_path if late_contributions_path else None,
+        }
+    
+    # Always include Secure 2.0 exceptions data
+    summary["secure20_exceptions"] = secure20_exceptions
+    summary["secure20_exception_count"] = secure20_exception_count
+    
+    # Include Secure 2.0 file paths if available
+    if secure20_exceptions_csv:
+        summary["secure20_files"] = {
+            "exceptions_csv": secure20_exceptions_csv,
         }
     
     return EngineResult(
