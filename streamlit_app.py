@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import sys
 import io
 import traceback
@@ -63,6 +63,35 @@ def api_download_evidence_pack(run_id: str) -> Optional[bytes]:
     if resp.status_code != 200:
         return None
     return resp.content
+
+
+def api_list_runs(limit: int = 50) -> Dict[str, Any]:
+    """
+    Call the ProofLink backend API to list recent runs.
+
+    Returns a dict like:
+    {
+        "count": int,
+        "items": [
+            {
+                "run_id": str,
+                "status": str,
+                "plan_name": str,
+                "created_at": str,
+                "updated_at": str,
+                "payroll_filename": str,
+                "rk_filename": str,
+                "has_evidence_pack": bool,
+                "summary": dict,
+            },
+            ...
+        ],
+    }
+    """
+    params = {"limit": limit}
+    resp = requests.get(f"{API_BASE_URL}/api/v1/runs", params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def format_timing_risk_badge(timing_risk: str) -> str:
@@ -143,7 +172,10 @@ if not check_password():
 
 def load_run_history() -> list[dict]:
     """
-    Load run history from run_summary.json files in run folders.
+    DEPRECATED: Load run history from run_summary.json files in run folders.
+    
+    This function is no longer used. Run history is now loaded from the API
+    via api_list_runs() instead of scanning the filesystem.
     
     Returns a list of dicts with run information, sorted by timestamp descending.
     """
@@ -1055,61 +1087,164 @@ def render_reconciliation_tab():
     st.markdown("---")
     st.header("2. View Run History")
 
-    manifest_files = sorted(PROOFS_DIR.glob("proof_manifest_*.json"), reverse=True)
+    try:
+        with st.spinner("Loading recent runs from ProofLink API..."):
+            runs_data = api_list_runs(limit=10)
+        items = runs_data.get("items", [])
+    except requests.RequestException as e:
+        st.error(f"Failed to load run history from API: {e}")
+        items = []
 
-    if not manifest_files:
-        st.info("No proof manifests found yet. Run a reconciliation to generate one.")
+    if not items:
+        st.info("No runs found yet. Run a reconciliation to see history here.")
     else:
-        st.write(f"Found {len(manifest_files)} proof manifest(s) in {PROOFS_DIR}")
+        st.write(f"Found {len(items)} recent run(s) from ProofLink API")
 
-        # Show the 10 most recent runs
-        for path in manifest_files[:10]:
-            # Derive a simple timestamp label from the filename
-            ts_label = path.stem.replace("proof_manifest_", "")
+        # Show the most recent runs
+        for r in items:
+            run_id = r.get("run_id")
+            plan_name = r.get("plan_name") or "Unnamed"
+            created_at = r.get("created_at")
+            status = r.get("status")
+            has_evidence = r.get("has_evidence_pack", False)
+            summary = r.get("summary", {}) or {}
 
-            with st.expander(f"Run: {ts_label}  |  File: {path.name}"):
-                st.code(str(path), language="text")
+            with st.expander(f"Run: {plan_name} — {run_id} | Created: {created_at}"):
+                st.write(f"**Run ID:** `{run_id}`")
+                st.write(f"**Status:** {status}")
+                st.write(f"**Created:** {created_at}")
+                st.write(f"**Payroll File:** {r.get('payroll_filename')}")
+                st.write(f"**Recordkeeper File:** {r.get('rk_filename')}")
 
-                # Download button for the manifest file
-                try:
-                    with open(path, "rb") as f:
-                        st.download_button(
-                            label="Download manifest JSON",
-                            data=f,
-                            file_name=path.name,
-                            mime="application/json",
-                            key=f"download_{path.name}",
-                        )
-                except Exception as e:
-                    st.error(f"Unable to read {path.name}: {e}")
+                # Show key metrics
+                if summary:
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Deferral Mismatches", summary.get("deferral_mismatch_count", 0))
+                    col2.metric("Loan Mismatches", summary.get("loan_mismatch_count", 0))
+                    col3.metric("Late Deferrals", summary.get("late_deferral_count", 0))
+
+                if has_evidence:
+                    if st.button(f"Download Evidence Pack for {run_id}", key=f"dl_recon_{run_id}"):
+                        with st.spinner("Fetching evidence pack from API..."):
+                            data = api_download_evidence_pack(run_id)
+                        if data is None:
+                            st.error("Evidence pack not available for this run.")
+                        else:
+                            st.download_button(
+                                label="Download Evidence Pack ZIP",
+                                data=data,
+                                file_name=f"evidence_{run_id}.zip",
+                                mime="application/zip",
+                                key=f"dl_btn_recon_{run_id}",
+                            )
+                else:
+                    st.info("Evidence pack not available for this run.")
 
 
 def render_run_history_tab():
     st.header("Run History")
     st.markdown("View summary of all previous reconciliation runs.")
     
-    runs = load_run_history()
+    try:
+        with st.spinner("Loading recent runs from ProofLink API..."):
+            runs_data = api_list_runs(limit=50)
+        items = runs_data.get("items", [])
+    except requests.RequestException as e:
+        st.error(f"Failed to load run history from API: {e}")
+        items = []
     
-    if not runs:
-        st.info("No prior runs found yet.")
-        return
-    
-    # Prepare data for display
-    display_data = []
-    for run in runs:
-        display_data.append({
-            "Run Time": run["timestamp"],
-            "Plan": run["plan_name"],
-            "Risk": f":{run['risk_color']}_circle: {run['risk_label']}",
-            "Deferral mismatches": run["deferral_mismatch_count"],
-            "Loan mismatches": run["loan_mismatch_count"],
-            "Late deferrals": run["late_deferral_count"],
-            "Total issues": run["total_issues"],
-            "Evidence pack": run["evidence_pack_path"],
-        })
-    
-    df = pd.DataFrame(display_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    if not items:
+        st.info("No runs found yet. Run an analysis to see history here.")
+    else:
+        # Summary table
+        table_rows = []
+        for r in items:
+            summary = r.get("summary", {}) or {}
+            # Try to pick out a risk indicator if present
+            risk = summary.get("timing_risk") or summary.get("run_risk_level") or "N/A"
+            
+            # Calculate total issues from summary
+            deferral_mismatches = summary.get("deferral_mismatch_count", 0)
+            loan_mismatches = summary.get("loan_mismatch_count", 0)
+            late_deferrals = summary.get("late_deferral_count", 0)
+            total_issues = deferral_mismatches + loan_mismatches + late_deferrals
+            
+            # Compute risk level
+            if total_issues == 0:
+                risk_label = "Low"
+            elif 1 <= total_issues <= 20:
+                risk_label = "Medium"
+            else:
+                risk_label = "High"
+            
+            table_rows.append({
+                "Run ID": r.get("run_id", "N/A"),
+                "Plan": r.get("plan_name", "Unknown"),
+                "Status": r.get("status", "unknown"),
+                "Created": r.get("created_at", "N/A"),
+                "Payroll File": r.get("payroll_filename", "N/A"),
+                "RK File": r.get("rk_filename", "N/A"),
+                "Risk": risk_label,
+                "Deferral Mismatches": deferral_mismatches,
+                "Loan Mismatches": loan_mismatches,
+                "Late Deferrals": late_deferrals,
+                "Total Issues": total_issues,
+            })
+        
+        if table_rows:
+            df = pd.DataFrame(table_rows)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Detailed per-run view with download buttons
+        st.markdown("### Detailed Run Information")
+        
+        for r in items:
+            run_id = r.get("run_id")
+            plan_name = r.get("plan_name") or "Unnamed"
+            created_at = r.get("created_at")
+            status = r.get("status")
+            has_evidence = r.get("has_evidence_pack", False)
+            summary = r.get("summary", {}) or {}
+            
+            with st.expander(f"{plan_name} — {run_id}"):
+                st.write(f"**Run ID:** `{run_id}`")
+                st.write(f"**Status:** {status}")
+                st.write(f"**Created:** {created_at}")
+                st.write(f"**Payroll File:** {r.get('payroll_filename')}")
+                st.write(f"**Recordkeeper File:** {r.get('rk_filename')}")
+                
+                # Show summary metrics
+                if summary:
+                    st.markdown("#### Summary Metrics")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Deferral Mismatches", summary.get("deferral_mismatch_count", 0))
+                    col2.metric("Loan Mismatches", summary.get("loan_mismatch_count", 0))
+                    col3.metric("Late Deferrals", summary.get("late_deferral_count", 0))
+                    
+                    col4, col5 = st.columns(2)
+                    col4.metric("Total Payroll Deferrals", f"${summary.get('total_deferrals_payroll', 0):,.2f}")
+                    col5.metric("Total RK Deferrals", f"${summary.get('total_deferrals_rk', 0):,.2f}")
+                
+                # Show full summary JSON in expander
+                with st.expander("View Full Summary JSON"):
+                    st.json(summary)
+                
+                if has_evidence:
+                    if st.button(f"Download Evidence Pack for {run_id}", key=f"dl_{run_id}"):
+                        with st.spinner("Fetching evidence pack from API..."):
+                            data = api_download_evidence_pack(run_id)
+                        if data is None:
+                            st.error("Evidence pack not available for this run.")
+                        else:
+                            st.download_button(
+                                label="Download Evidence Pack ZIP",
+                                data=data,
+                                file_name=f"evidence_{run_id}.zip",
+                                mime="application/zip",
+                                key=f"dl_btn_{run_id}",
+                            )
+                else:
+                    st.info("Evidence pack not available for this run.")
 
 
 # ==============================
