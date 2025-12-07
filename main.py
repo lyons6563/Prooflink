@@ -376,9 +376,21 @@ def run_prooflink_engine(
         "run_id": run_id,
     }
     
-    # Add timing metrics if available
-    if timing_metrics:
-        summary["timing_metrics"] = timing_metrics
+    # Always include timing_metrics (even if empty dict from failed timing analysis)
+    summary["timing_metrics"] = timing_metrics
+    
+    # Include timing dict if it has additional fields beyond late_deferral_count
+    if timing:
+        summary["timing"] = timing
+    
+    # Include timing file paths if available
+    late_contributions_path = reconciliation_results.get("late_contributions", "")
+    timing_summary_path = reconciliation_results.get("timing_summary", "")
+    if late_contributions_path or timing_summary_path:
+        summary["timing_files"] = {
+            "timing_summary_json": timing_summary_path if timing_summary_path else None,
+            "late_contributions_csv": late_contributions_path if late_contributions_path else None,
+        }
     
     return EngineResult(
         run_id=run_id,
