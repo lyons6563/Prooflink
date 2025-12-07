@@ -381,17 +381,61 @@ def run_prooflink_engine(
     mismatches = reconciliation_results.get("mismatches", {})
     timing = reconciliation_results.get("timing", {})
     
-    # Build summary dict from reconciliation_results
-    vendor_detection = reconciliation_results.get("vendor_detection", {})
-    totals = reconciliation_results.get("totals", {})
-    mismatches = reconciliation_results.get("mismatches", {})
-    timing = reconciliation_results.get("timing", {})
-    
     # Extract Secure 2.0 exceptions
     secure20_exceptions_raw = reconciliation_results.get("secure20_exceptions", [])
     secure20_exceptions = secure20_exceptions_raw if isinstance(secure20_exceptions_raw, list) else []
     secure20_exception_count = len(secure20_exceptions)
     secure20_exceptions_csv = reconciliation_results.get("secure20_exceptions_csv")
+    
+    # Run contribution timing analysis directly to ensure it executes and we capture metrics
+    real_timing_metrics: Dict[str, Any] = {}
+    timing_result = None
+    
+    # Derive output directory from evidence_pack_path
+    # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
+    # output_dir should be: "api_uploads\\<run_id>\\output"
+    output_dir = os.path.dirname(evidence_pack_path) if evidence_pack_path else config.output_dir
+    
+    try:
+        # Call run_timing_analysis directly to ensure it runs
+        timing_result = run_timing_analysis(
+            payroll_path=str(payroll_csv),
+            rk_path=str(rk_csv),
+            output_dir=output_dir,
+            late_threshold_days=5,  # Default Secure 2.0 threshold
+        )
+        # Capture the returned timing metrics
+        if isinstance(timing_result, dict) and timing_result:
+            real_timing_metrics = {
+                "total_rows": timing_result.get("total_rows", 0),
+                "late_rows": timing_result.get("late_rows", 0),
+                "missing_deposits": timing_result.get("missing_deposits", 0),
+                "timing_risk": timing_result.get("timing_risk", "N/A"),
+            }
+    except Exception as exc:
+        # Log the error but continue - we'll fall back to defaults or reconciliation_results
+        logger.warning(f"Timing analysis failed in run_prooflink_engine: {exc}")
+        real_timing_metrics = {}
+    
+    # If timing analysis didn't produce results, try to get from reconciliation_results
+    if not real_timing_metrics:
+        timing_metrics_raw = reconciliation_results.get("timing_metrics")
+        if isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
+            real_timing_metrics = timing_metrics_raw.copy()
+            # Ensure all keys exist
+            real_timing_metrics.setdefault("total_rows", 0)
+            real_timing_metrics.setdefault("late_rows", 0)
+            real_timing_metrics.setdefault("missing_deposits", 0)
+            real_timing_metrics.setdefault("timing_risk", "N/A")
+    
+    # Final fallback if nothing was loaded
+    if not real_timing_metrics:
+        real_timing_metrics = {
+            "total_rows": 0,
+            "late_rows": 0,
+            "missing_deposits": 0,
+            "timing_risk": "N/A",
+        }
     
     summary = {
         "plan_name": config.plan_name,
@@ -410,45 +454,6 @@ def run_prooflink_engine(
         "run_id": run_id,
     }
     
-    # Load real timing_metrics from timing_summary.json file in the run directory
-    real_timing_metrics: Dict[str, Any] = {}
-    
-    # Derive run root directory from evidence_pack_path
-    # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
-    # We want the directory one level above "output": "api_uploads\\<run_id>"
-    if evidence_pack_path:
-        output_dir = os.path.dirname(evidence_pack_path)
-        run_root = os.path.dirname(output_dir)
-        
-        # Search for timing_summary.json in the run directory
-        timing_summary = _find_timing_summary(run_root)
-        if isinstance(timing_summary, dict):
-            real_timing_metrics = {
-                "total_rows": timing_summary.get("total_rows", 0),
-                "late_rows": timing_summary.get("late_rows", 0),
-                "missing_deposits": timing_summary.get("missing_deposits", 0),
-                "timing_risk": timing_summary.get("timing_risk") or timing_summary.get("risk_level", "N/A"),
-            }
-    
-    # If there is already an in-memory timing_metrics dict that is non-empty, prefer that
-    timing_metrics_raw = reconciliation_results.get("timing_metrics")
-    if not real_timing_metrics and isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
-        real_timing_metrics = timing_metrics_raw.copy()
-        # Ensure all keys exist
-        real_timing_metrics.setdefault("total_rows", 0)
-        real_timing_metrics.setdefault("late_rows", 0)
-        real_timing_metrics.setdefault("missing_deposits", 0)
-        real_timing_metrics.setdefault("timing_risk", "N/A")
-    
-    # Final fallback if nothing was loaded
-    if not real_timing_metrics:
-        real_timing_metrics = {
-            "total_rows": 0,
-            "late_rows": 0,
-            "missing_deposits": 0,
-            "timing_risk": "N/A",
-        }
-    
     # Always include timing_metrics with real values (or defaults if not found)
     summary["timing_metrics"] = real_timing_metrics
     
@@ -456,9 +461,15 @@ def run_prooflink_engine(
     if timing:
         summary["timing"] = timing
     
-    # Include timing file paths if available
-    late_contributions_path = reconciliation_results.get("late_contributions", "")
-    timing_summary_path = reconciliation_results.get("timing_summary", "")
+    # Include timing file paths if available (prefer from direct call, fallback to reconciliation_results)
+    late_contributions_path = ""
+    timing_summary_path = ""
+    if timing_result and isinstance(timing_result, dict):
+        late_contributions_path = timing_result.get("late_contributions_path", "")
+        timing_summary_path = timing_result.get("timing_summary_path", "")
+    if not late_contributions_path or not timing_summary_path:
+        late_contributions_path = reconciliation_results.get("late_contributions", late_contributions_path)
+        timing_summary_path = reconciliation_results.get("timing_summary", timing_summary_path)
     if late_contributions_path or timing_summary_path:
         summary["timing_files"] = {
             "timing_summary_json": timing_summary_path if timing_summary_path else None,
