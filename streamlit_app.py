@@ -1001,6 +1001,18 @@ def render_reconciliation_tab():
             col9 = st.columns(1)[0]
             col9.metric("Late Deferral Rows", f"{summary.late_deferral_count:,}")
             
+            # Timing Analysis Results
+            timing_metrics = results_dict.get("timing_metrics", {})
+            if timing_metrics:
+                st.divider()
+                st.markdown("### Contribution Timing Analysis")
+                timing_risk_display = format_timing_risk_badge(timing_metrics.get("timing_risk"))
+                st.markdown(f"**Timing Risk:** {timing_risk_display}")
+                col_t1, col_t2, col_t3 = st.columns(3)
+                col_t1.metric("Total Rows Analyzed", f"{timing_metrics.get('total_rows', 0):,}")
+                col_t2.metric("Late Rows", f"{timing_metrics.get('late_rows', 0):,}")
+                col_t3.metric("Missing Deposits", f"{timing_metrics.get('missing_deposits', 0):,}")
+            
             # Secure 2.0 Catch-Up Exceptions
             secure20_exceptions = results_dict.get("secure20_exceptions", [])
             if secure20_exceptions:

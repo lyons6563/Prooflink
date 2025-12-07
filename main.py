@@ -21,6 +21,8 @@ from vendors import (
     apply_vendor_column_mapping,
 )
 
+from contribution_timing_analyzer_v2 import run_timing_analysis
+
 
 @dataclass
 class RunSummary:
@@ -688,6 +690,31 @@ def run_reconciliation(
     if secure20_exceptions_path is not None:
         results["secure20_exceptions_csv"] = str(secure20_exceptions_path)
 
+    # Run timing analysis and add results
+    try:
+        timing_result = run_timing_analysis(
+            payroll_path=str(payroll_path),
+            rk_path=str(rk_path),
+            output_dir=str(output_dir_path),
+            late_threshold_days=5,  # Default Secure 2.0 threshold
+        )
+        # Add timing file paths to results
+        results["late_contributions"] = timing_result.get("late_contributions_path", "")
+        results["timing_summary"] = timing_result.get("timing_summary_path", "")
+        # Store timing metrics for UI
+        results["timing_metrics"] = {
+            "total_rows": timing_result.get("total_rows", 0),
+            "late_rows": timing_result.get("late_rows", 0),
+            "missing_deposits": timing_result.get("missing_deposits", 0),
+            "timing_risk": timing_result.get("timing_risk", "N/A"),
+        }
+    except Exception as e:
+        print(f"[WARN] Timing analysis failed: {e}")
+        # Continue without timing results - don't break reconciliation
+        results["late_contributions"] = ""
+        results["timing_summary"] = ""
+        results["timing_metrics"] = {}
+
     # Build consolidated evidence pack ZIP
     evidence_zip = build_evidence_pack(results)
     results["evidence_pack"] = str(evidence_zip)
@@ -736,6 +763,8 @@ def build_evidence_pack(results: dict) -> Path:
         "late_loans",
         "secure20_exceptions_csv",
         "manifest",
+        "late_contributions",
+        "timing_summary",
     ]
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
