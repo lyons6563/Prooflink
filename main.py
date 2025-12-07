@@ -357,22 +357,49 @@ def run_prooflink_engine(
     totals = reconciliation_results.get("totals", {})
     mismatches = reconciliation_results.get("mismatches", {})
     timing = reconciliation_results.get("timing", {})
-    timing_metrics_raw = reconciliation_results.get("timing_metrics", {})
     
-    # Normalize timing_metrics to ensure required keys exist
+    # Get real timing_metrics from reconciliation_results (the same dict that's printed in "Run complete")
+    real_timing_metrics = {}
+    timing_metrics_raw = reconciliation_results.get("timing_metrics")
+    
     if isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
-        # Use existing timing_metrics if it has the required keys
-        tm = timing_metrics_raw.copy()
+        # Use the real timing_metrics dict directly (the one that's printed in "Run complete. Key outputs:")
+        # This is the actual dict with real values like {'total_rows': 20, 'late_rows': 0, 'missing_deposits': 20, 'timing_risk': 'High'}
+        real_timing_metrics = timing_metrics_raw.copy()
+        # Only fill in missing keys with defaults (don't overwrite real values)
+        real_timing_metrics.setdefault("total_rows", 0)
+        real_timing_metrics.setdefault("late_rows", 0)
+        real_timing_metrics.setdefault("missing_deposits", 0)
+        real_timing_metrics.setdefault("timing_risk", "N/A")
     else:
-        # Start with empty dict if timing_metrics is missing or invalid
-        tm = {}
+        # Fallback: try to derive from timing_summary JSON file if available
+        timing_summary_path = reconciliation_results.get("timing_summary", "")
+        if timing_summary_path:
+            try:
+                timing_summary_path_obj = Path(timing_summary_path)
+                if timing_summary_path_obj.exists():
+                    with timing_summary_path_obj.open("r", encoding="utf-8") as f:
+                        timing_summary_data = json.load(f)
+                        if isinstance(timing_summary_data, dict):
+                            real_timing_metrics = {
+                                "total_rows": timing_summary_data.get("total_rows", 0),
+                                "late_rows": timing_summary_data.get("late_rows", 0),
+                                "missing_deposits": timing_summary_data.get("missing_deposits", 0),
+                                "timing_risk": timing_summary_data.get("risk_level") or timing_summary_data.get("timing_risk", "N/A"),
+                            }
+            except Exception:
+                pass  # Fall through to final defaults
     
-    # Ensure all required keys exist with defaults
-    tm.setdefault("total_rows", 0)
-    tm.setdefault("late_rows", 0)
-    tm.setdefault("missing_deposits", 0)
-    tm.setdefault("timing_risk", "N/A")
-    timing_metrics = tm
+    # Final fallback: only use defaults if timing analysis genuinely didn't run
+    if not real_timing_metrics:
+        real_timing_metrics = {
+            "total_rows": 0,
+            "late_rows": 0,
+            "missing_deposits": 0,
+            "timing_risk": "N/A",
+        }
+    
+    timing_metrics = real_timing_metrics
     
     # Extract Secure 2.0 exceptions
     secure20_exceptions_raw = reconciliation_results.get("secure20_exceptions", [])
