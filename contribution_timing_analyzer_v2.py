@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from datetime import datetime
@@ -873,7 +874,11 @@ def run_timing_analysis(
 
     late_rows = result[(result["is_late"]) | (result["missing_deposit"])].copy()
 
-    late_path = output_dir_obj / "late_contributions.csv"
+    # Build output paths explicitly
+    late_contributions_path = os.path.join(output_dir, "late_contributions.csv")
+    timing_summary_path = os.path.join(output_dir, "timing_summary.json")
+    
+    late_path = Path(late_contributions_path)
     late_rows.to_csv(late_path, index=False)
 
     # Compute core counts for timing risk
@@ -923,7 +928,7 @@ def run_timing_analysis(
     }
     
     # Write timing_summary.json
-    summary_path = output_dir_obj / "timing_summary.json"
+    summary_path = Path(timing_summary_path)
     with open(summary_path, "w") as f:
         json.dump(summary_data, f, indent=4)
     print(f"Timing summary JSON written to: {summary_path}")
@@ -934,8 +939,8 @@ def run_timing_analysis(
         "late_rows": num_late,
         "missing_deposits": num_missing,
         "timing_risk": timing_risk,
-        "late_contributions_path": str(late_path),
-        "timing_summary_path": str(summary_path),
+        "late_contributions_path": late_contributions_path,
+        "timing_summary_path": timing_summary_path,
     }
 
 
