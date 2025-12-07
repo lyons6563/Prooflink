@@ -459,52 +459,27 @@ def run_prooflink_analysis(payroll_file, rk_file, output_dir: Path = None, late_
 
 
 def render_contribution_timing_tab():
-    st.header("Contribution Timing Analysis")
+    st.subheader("Contribution Timing Analysis")
     
-    st.markdown(
-        "View contribution timing metrics from the most recent reconciliation run. "
-        "Run an analysis in the Reconciliation tab to see timing data here."
-    )
-    
-    # Get summary from session state (set by Reconciliation tab)
     summary = st.session_state.get("current_summary") or {}
     timing_metrics = summary.get("timing_metrics") or {}
     
-    st.subheader("Contribution Timing Analysis")
-    
     if not timing_metrics:
-        st.info("No timing metrics available for this run. Run a new analysis in the Reconciliation tab or verify that timing analysis is enabled.")
+        st.info("No timing metrics available for this run. Run a new analysis in the Reconciliation tab.")
     else:
         timing_risk = timing_metrics.get("timing_risk", "N/A")
         total_rows = timing_metrics.get("total_rows", 0)
         late_rows = timing_metrics.get("late_rows", 0)
         missing_deposits = timing_metrics.get("missing_deposits", 0)
         
-        # Display Timing Risk prominently
-        timing_risk_display = format_timing_risk_badge(timing_risk)
-        st.markdown(f"**Timing Risk:** {timing_risk_display}")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Timing Risk", timing_risk)
+        col2.metric("Total Rows Analyzed", total_rows)
+        col3.metric("Late Rows", late_rows)
+        col4.metric("Missing Deposits", missing_deposits)
         
-        # Simple metric display
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("Total Rows Analyzed", f"{total_rows:,}")
-            st.metric("Late Rows", f"{late_rows:,}")
-        
-        with col2:
-            st.metric("Missing Deposits", f"{missing_deposits:,}")
-        
-        # Show additional context if available
-        if summary.get("plan_name"):
-            st.info(f"Plan: {summary.get('plan_name')}")
-        
-        # Optionally show raw JSON for debugging
-        with st.expander("Raw Timing Metrics"):
+        with st.expander("Raw timing metrics"):
             st.json(timing_metrics)
-        
-        # Show full summary if user wants to see it
-        with st.expander("View Full Summary"):
-            st.json(summary)
 
 
 def classify_run_risk(summary: Dict[str, Any]) -> str:
@@ -968,17 +943,39 @@ def render_reconciliation_tab():
         col9 = st.columns(1)[0]
         col9.metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
         
-        # Timing Analysis Results
+        # Contribution Timing Analysis
+        st.divider()
+        st.markdown("### Contribution Timing Analysis")
         timing_metrics = summary_dict.get("timing_metrics", {})
-        if timing_metrics:
-            st.divider()
-            st.markdown("### Contribution Timing Analysis")
-            timing_risk_display = format_timing_risk_badge(timing_metrics.get("timing_risk"))
-            st.markdown(f"**Timing Risk:** {timing_risk_display}")
-            col_t1, col_t2, col_t3 = st.columns(3)
-            col_t1.metric("Total Rows Analyzed", f"{timing_metrics.get('total_rows', 0):,}")
-            col_t2.metric("Late Rows", f"{timing_metrics.get('late_rows', 0):,}")
-            col_t3.metric("Missing Deposits", f"{timing_metrics.get('missing_deposits', 0):,}")
+        secure20_exception_count = summary_dict.get("secure20_exception_count", 0)
+        
+        if not timing_metrics:
+            st.write("No timing metrics available for this run.")
+        else:
+            timing_risk = timing_metrics.get("timing_risk", "N/A")
+            total_rows = timing_metrics.get("total_rows", 0)
+            late_rows = timing_metrics.get("late_rows", 0)
+            missing_deposits = timing_metrics.get("missing_deposits", 0)
+            
+            cols = st.columns(4)
+            cols[0].metric("Timing Risk", timing_risk)
+            cols[1].metric("Total Rows Analyzed", total_rows)
+            cols[2].metric("Late Rows", late_rows)
+            cols[3].metric("Missing Deposits", missing_deposits)
+        
+        # Secure 2.0 Catch-Up Exceptions
+        st.divider()
+        st.markdown("### Secure 2.0 Catch-Up Exceptions")
+        
+        if secure20_exception_count == 0:
+            st.write("No Secure 2.0 catch-up violations detected.")
+        else:
+            st.write(f"{secure20_exception_count} Secure 2.0 violation(s) detected (HCE pre-tax catch-up).")
+            
+            # Optionally show details
+            secure20_exceptions = summary_dict.get("secure20_exceptions") or []
+            with st.expander("View Secure 2.0 exception details"):
+                st.json(secure20_exceptions)
         
         # Evidence pack download
         st.divider()
