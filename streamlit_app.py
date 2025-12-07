@@ -967,14 +967,21 @@ def render_reconciliation_tab():
             
             st.divider()
             
-            # Vendor info with confidence warnings
+            # Vendor info with confidence warnings - read directly from vendor_detection dict
+            # to ensure it matches what's printed in the console output
+            vendor_detection = results_dict.get("vendor_detection", {})
+            payroll_vendor = vendor_detection.get("payroll_vendor", "Unknown / Generic")
+            rk_vendor = vendor_detection.get("rk_vendor", "Unknown / Generic")
+            payroll_conf = vendor_detection.get("payroll_vendor_confidence", 0.0)
+            rk_conf = vendor_detection.get("rk_vendor_confidence", 0.0)
+            
             col1, col2 = st.columns(2)
-            col1.metric("Payroll Vendor", summary.payroll_vendor)
-            if summary.payroll_vendor_confidence < 0.65:
-                col1.warning(f"Low confidence: {summary.payroll_vendor_confidence:.2f}")
-            col2.metric("Recordkeeper", summary.rk_vendor)
-            if summary.rk_vendor_confidence < 0.65:
-                col2.warning(f"Low confidence: {summary.rk_vendor_confidence:.2f}")
+            col1.metric("Payroll Vendor", payroll_vendor)
+            if payroll_conf < 0.65:
+                col1.warning(f"Low confidence: {payroll_conf:.2f}")
+            col2.metric("Recordkeeper", rk_vendor)
+            if rk_conf < 0.65:
+                col2.warning(f"Low confidence: {rk_conf:.2f}")
             
             st.divider()
             

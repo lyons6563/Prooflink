@@ -660,6 +660,9 @@ def run_reconciliation(
         "late_loan_count": safe_len_csv(late_loans_path),
     }
 
+    # Use the same values that are printed in the console output
+    # This ensures vendor_detection dict matches what's displayed in === Vendor Detection ===
+    # Use the exact same expression as the print statements above (line 346-347)
     vendor_detection = {
         "payroll_vendor": payroll_vendor or "Unknown / Generic",
         "rk_vendor": rk_vendor or "Unknown / Generic",
