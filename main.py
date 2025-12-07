@@ -41,6 +41,46 @@ class RunSummary:
     late_deferral_count: int
     evidence_pack_path: Path
     run_id: str  # e.g. timestamp or UUID
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert RunSummary to a JSON-serializable dict."""
+        return {
+            "plan_name": self.plan_name,
+            "payroll_vendor": self.payroll_vendor,
+            "rk_vendor": self.rk_vendor,
+            "payroll_vendor_confidence": self.payroll_vendor_confidence,
+            "rk_vendor_confidence": self.rk_vendor_confidence,
+            "total_deferrals_payroll": self.total_deferrals_payroll,
+            "total_deferrals_rk": self.total_deferrals_rk,
+            "total_loans_payroll": self.total_loans_payroll,
+            "total_loans_rk": self.total_loans_rk,
+            "deferral_mismatch_count": self.deferral_mismatch_count,
+            "loan_mismatch_count": self.loan_mismatch_count,
+            "late_deferral_count": self.late_deferral_count,
+            "evidence_pack_path": str(self.evidence_pack_path),
+            "run_id": self.run_id,
+        }
+
+
+@dataclass
+class EngineConfig:
+    """Configuration for the ProofLink engine."""
+    plan_name: str
+    late_threshold_days: int = 5
+    secure2_enabled: bool = True
+    payroll_vendor_hint: Optional[str] = None
+    rk_vendor_hint: Optional[str] = None
+    output_dir: str = "data/processed"
+    proofs_dir: str = "proofs"
+
+
+@dataclass
+class EngineResult:
+    """Result from running the ProofLink engine."""
+    run_id: str
+    summary: Dict[str, Any]
+    evidence_pack_path: str
+    manifest: Dict[str, Any]
 
 
 def run_reconciliation_with_summary(
@@ -236,6 +276,116 @@ def run_reconciliation_with_summary(
             "results_dict": {},
             "error": error_text
         }
+
+
+def run_prooflink_engine(
+    payroll_path: str,
+    rk_path: str,
+    config: EngineConfig,
+    *,
+    run_id: Optional[str] = None,
+) -> EngineResult:
+    """
+    Core ProofLink engine entrypoint.
+
+    Responsibilities:
+    - Load input files
+    - Run reconciliation
+    - Run contribution timing analysis
+    - Run Secure 2.0 checks
+    - Build evidence pack ZIP
+    - Assemble a JSON-serializable summary and manifest
+    - Return EngineResult with:
+        - run_id
+        - summary dict
+        - evidence pack filesystem path
+        - manifest dict
+
+    Args:
+        payroll_path: Path to payroll CSV file
+        rk_path: Path to recordkeeper CSV file
+        config: EngineConfig with plan name, thresholds, and other settings
+        run_id: Optional run ID (if not provided, will be generated)
+
+    Returns:
+        EngineResult containing run_id, summary dict, evidence_pack_path, and manifest dict
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Generate run_id if not provided
+    if run_id is None:
+        from datetime import datetime
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Convert string paths to Path objects
+    payroll_csv = Path(payroll_path)
+    rk_csv = Path(rk_path)
+    
+    # Validate input files exist
+    if not payroll_csv.exists():
+        raise FileNotFoundError(f"Payroll CSV not found: {payroll_csv}")
+    if not rk_csv.exists():
+        raise FileNotFoundError(f"Recordkeeper CSV not found: {rk_csv}")
+    
+    # Run reconciliation (includes Secure 2.0 checks, timing analysis, evidence pack)
+    reconciliation_results = run_reconciliation(
+        payroll_csv=str(payroll_csv),
+        rk_csv=str(rk_csv),
+        payroll_vendor_hint=config.payroll_vendor_hint,
+        rk_vendor_hint=config.rk_vendor_hint,
+        output_dir=config.output_dir,
+        proofs_dir=config.proofs_dir,
+    )
+    
+    # Get the evidence pack path from results
+    evidence_pack_path = reconciliation_results.get("evidence_pack", "")
+    if not evidence_pack_path:
+        raise ValueError("Evidence pack was not created by run_reconciliation")
+    
+    # Get manifest path and load it
+    manifest_path = Path(reconciliation_results.get("manifest", ""))
+    manifest = {}
+    if manifest_path.exists():
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    else:
+        logger.warning(f"Manifest file not found at {manifest_path}")
+    
+    # Build summary dict from reconciliation_results
+    vendor_detection = reconciliation_results.get("vendor_detection", {})
+    totals = reconciliation_results.get("totals", {})
+    mismatches = reconciliation_results.get("mismatches", {})
+    timing = reconciliation_results.get("timing", {})
+    timing_metrics = reconciliation_results.get("timing_metrics", {})
+    
+    summary = {
+        "plan_name": config.plan_name,
+        "payroll_vendor": vendor_detection.get("payroll_vendor", "Unknown / Generic"),
+        "rk_vendor": vendor_detection.get("rk_vendor", "Unknown / Generic"),
+        "payroll_vendor_confidence": float(vendor_detection.get("payroll_vendor_confidence", 0.0)),
+        "rk_vendor_confidence": float(vendor_detection.get("rk_vendor_confidence", 0.0)),
+        "total_deferrals_payroll": float(totals.get("deferrals_payroll", 0.0)),
+        "total_deferrals_rk": float(totals.get("deferrals_rk", 0.0)),
+        "total_loans_payroll": float(totals.get("loans_payroll", 0.0)),
+        "total_loans_rk": float(totals.get("loans_rk", 0.0)),
+        "deferral_mismatch_count": int(mismatches.get("deferral_count", 0)),
+        "loan_mismatch_count": int(mismatches.get("loan_count", 0)),
+        "late_deferral_count": int(timing.get("late_deferral_count", 0)),
+        "evidence_pack_path": evidence_pack_path,
+        "run_id": run_id,
+    }
+    
+    # Add timing metrics if available
+    if timing_metrics:
+        summary["timing_metrics"] = timing_metrics
+    
+    return EngineResult(
+        run_id=run_id,
+        summary=summary,
+        evidence_pack_path=evidence_pack_path,
+        manifest=manifest,
+    )
 
 
 from datetime import datetime
@@ -2027,20 +2177,47 @@ if __name__ == "__main__":
     has_cli_args = len(sys.argv) > 1 and "--payroll_csv" in sys.argv
 
     if has_cli_args:
-        # CLI mode: parse arguments and run reconciliation directly
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--payroll_csv", required=True)
-        parser.add_argument("--rk_csv", required=True)
-        parser.add_argument("--output_dir", default="data/processed")
-        parser.add_argument("--proofs_dir", default="proofs")
+        # CLI mode: parse arguments and run engine
+        parser = argparse.ArgumentParser(description="ProofLink Reconciliation Engine")
+        parser.add_argument("--payroll_csv", required=True, help="Path to payroll CSV file")
+        parser.add_argument("--rk_csv", required=True, help="Path to recordkeeper CSV file")
+        parser.add_argument("--plan_name", default="Unknown Plan", help="Plan name")
+        parser.add_argument("--output_dir", default="data/processed", help="Output directory")
+        parser.add_argument("--proofs_dir", default="proofs", help="Proofs directory")
+        parser.add_argument("--late_threshold_days", type=int, default=5, help="Late contribution threshold in days")
+        parser.add_argument("--payroll_vendor_hint", help="Optional payroll vendor hint")
+        parser.add_argument("--rk_vendor_hint", help="Optional recordkeeper vendor hint")
         args = parser.parse_args()
 
-        run_reconciliation(
-            payroll_csv=args.payroll_csv,
-            rk_csv=args.rk_csv,
+        # Create engine config
+        config = EngineConfig(
+            plan_name=args.plan_name,
+            late_threshold_days=args.late_threshold_days,
+            secure2_enabled=True,
+            payroll_vendor_hint=args.payroll_vendor_hint,
+            rk_vendor_hint=args.rk_vendor_hint,
             output_dir=args.output_dir,
             proofs_dir=args.proofs_dir,
         )
+
+        # Run engine
+        result = run_prooflink_engine(
+            payroll_path=args.payroll_csv,
+            rk_path=args.rk_csv,
+            config=config,
+        )
+
+        # Print results
+        print("\n" + "="*60)
+        print("ProofLink Engine Run Complete")
+        print("="*60)
+        print(f"Run ID: {result.run_id}")
+        print(f"Evidence Pack: {result.evidence_pack_path}")
+        print("\nSummary:")
+        for key, value in result.summary.items():
+            if key != "run_id":  # Already printed
+                print(f"  {key}: {value}")
+        print(f"\nManifest: {len(result.manifest)} keys")
     else:
         # No CLI args: use config-based wrapper (legacy behavior)
         reconcile_payroll_vs_recordkeeper()
