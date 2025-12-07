@@ -210,8 +210,11 @@ def load_run_history() -> list[dict]:
     return runs
 
 
-def compute_run_risk_level(summary: RunSummary, results_dict: dict = None) -> tuple[str, str]:
+def compute_run_risk_level(summary: Dict[str, Any], results_dict: Optional[Dict[str, Any]] = None) -> tuple[str, str]:
     """
+    Compute the risk level and label for a run based on the summary dict
+    returned by the API.
+    
     Return (label, color) based on mismatch/late counts and coverage gaps.
     
     Rules:
@@ -230,9 +233,9 @@ def compute_run_risk_level(summary: RunSummary, results_dict: dict = None) -> tu
             return ("High", "red")
     
     total_issues = (
-        summary.deferral_mismatch_count 
-        + summary.loan_mismatch_count 
-        + summary.late_deferral_count
+        summary.get("deferral_mismatch_count", 0)
+        + summary.get("loan_mismatch_count", 0)
+        + summary.get("late_deferral_count", 0)
     )
     
     if total_issues == 0:
@@ -541,19 +544,19 @@ def render_contribution_timing_tab():
                 )
         except Exception as e:
             st.error(f"Could not read output file: {e}")
-def classify_run_risk(summary: RunSummary) -> str:
+def classify_run_risk(summary: Dict[str, Any]) -> str:
     """
     Simple risk classifier based on mismatch + late counts.
-    We’ll upgrade later with dollar thresholds / percentages.
+    We'll upgrade later with dollar thresholds / percentages.
     """
-    if summary.late_deferral_count > 0:
+    if summary.get("late_deferral_count", 0) > 0:
         return "High"
-    if summary.deferral_mismatch_count > 0 or summary.loan_mismatch_count > 0:
+    if summary.get("deferral_mismatch_count", 0) > 0 or summary.get("loan_mismatch_count", 0) > 0:
         return "Medium"
     return "Low"
 
 
-def render_run_summary(summary: RunSummary) -> None:
+def render_run_summary(summary: Dict[str, Any]) -> None:
     st.subheader("Run Summary")
 
     risk = classify_run_risk(summary)
@@ -563,46 +566,54 @@ def render_run_summary(summary: RunSummary) -> None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("Plan", summary.plan_name)
-        st.text(f"Payroll vendor: {summary.payroll_vendor}")
-        st.text(f"Recordkeeper: {summary.rk_vendor}")
+        st.metric("Plan", summary.get("plan_name", "Unknown"))
+        st.text(f"Payroll vendor: {summary.get('payroll_vendor', 'Unknown')}")
+        st.text(f"Recordkeeper: {summary.get('rk_vendor', 'Unknown')}")
 
     with col2:
         st.metric(
             "Deferrals (Payroll)",
-            f"{summary.total_deferrals_payroll:,.2f}",
+            f"{summary.get('total_deferrals_payroll', 0.0):,.2f}",
         )
         st.metric(
             "Deferrals (RK)",
-            f"{summary.total_deferrals_rk:,.2f}",
+            f"{summary.get('total_deferrals_rk', 0.0):,.2f}",
         )
 
     with col3:
-        st.metric("Deferral mismatches", summary.deferral_mismatch_count)
-        st.metric("Loan mismatches", summary.loan_mismatch_count)
+        st.metric("Deferral mismatches", summary.get("deferral_mismatch_count", 0))
+        st.metric("Loan mismatches", summary.get("loan_mismatch_count", 0))
 
     st.divider()
 
     col4, col5 = st.columns(2)
     with col4:
-        st.metric("Late deferrals (rows)", summary.late_deferral_count)
+        st.metric("Late deferrals (rows)", summary.get("late_deferral_count", 0))
 
     with col5:
         st.write("Evidence Pack")
-        st.download_button(
-            label="Download Evidence Pack",
-            data=open(summary.evidence_pack_path, "rb").read(),
-            file_name=summary.evidence_pack_path.name,
-            mime="application/zip",
-        )
+        evidence_pack_path = summary.get("evidence_pack_path")
+        if evidence_pack_path:
+            evidence_path = Path(evidence_pack_path)
+            if evidence_path.exists():
+                st.download_button(
+                    label="Download Evidence Pack",
+                    data=open(evidence_path, "rb").read(),
+                    file_name=evidence_path.name,
+                    mime="application/zip",
+                )
+            else:
+                st.info("Evidence pack not available locally")
+        else:
+            st.info("Evidence pack path not available")
 
 
-def build_anomaly_narrative(summary: RunSummary, results_dict: dict) -> str:
+def build_anomaly_narrative(summary: Dict[str, Any], results_dict: Dict[str, Any]) -> str:
     """
     Turn the run metrics into a one-line narrative an auditor / committee can consume.
     
     Args:
-        summary: RunSummary object with high-level KPIs
+        summary: Summary dict with high-level KPIs from the API
         results_dict: Dictionary with paths and metrics from reconciliation
     """
     def safe_len(path_key: str) -> int:
@@ -766,13 +777,6 @@ def render_batch_reconciliation_tab():
                     risk = "Low"
                 
                 # Create a simple summary object for compatibility
-                class SummaryDict:
-                    def __init__(self, d):
-                        for k, v in d.items():
-                            setattr(self, k, v)
-                
-                summary = SummaryDict(summary_dict)
-
                 batch_rows.append(
                     {
                         "Run #": idx,
@@ -911,13 +915,7 @@ def render_reconciliation_tab():
             # Fall back to cached summary if API call fails
             manifest = {}
         
-        # Convert summary dict to object-like access for compatibility
-        class SummaryDict:
-            def __init__(self, d):
-                for k, v in d.items():
-                    setattr(self, k, v)
-        
-        summary = SummaryDict(summary_dict)
+        # Use summary_dict directly (it's already a dict from the API)
         results_dict = {"vendor_detection": summary_dict.get("vendor_detection", {})}
             
         # Extract coverage gap counts from summary (if available in mismatches)
