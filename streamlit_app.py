@@ -894,6 +894,13 @@ def render_reconciliation_tab():
         # Display metrics from summary dict
         st.subheader("Reconciliation Summary")
         
+        # Get summary from session state for debug view
+        summary = st.session_state.get("current_summary") or {}
+        
+        # DEBUG: Raw summary dict
+        with st.expander("DEBUG: Raw summary dict"):
+            st.json(summary)
+        
         # Risk level indicator
         if all_totals_zero:
             st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
