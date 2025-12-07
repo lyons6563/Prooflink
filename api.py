@@ -8,14 +8,14 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from uuid import uuid4
 from pathlib import Path
-from typing import Dict
 
 from main import EngineConfig, run_prooflink_engine, EngineResult
+from db import init_db, insert_run, get_run as get_run_from_db
 
 app = FastAPI(title="ProofLink API", version="0.1")
 
-# Temporary in-memory run registry (replace with DB later)
-RUNS: Dict[str, EngineResult] = {}
+# Initialize database on startup
+init_db()
 
 
 @app.post("/api/v1/runs")
@@ -68,13 +68,25 @@ async def create_run(
             run_id=run_id,
         )
         
-        # Store result in registry
-        RUNS[run_id] = result
+        # Persist run in DB
+        insert_run(
+            run_id=run_id,
+            status="completed",  # queue/async will add other statuses later
+            plan_name=plan_name,
+            payroll_filename=payroll_file.filename or "payroll.csv",
+            rk_filename=rk_file.filename or "rk.csv",
+            summary=result.summary,
+            manifest=getattr(result, "manifest", None),
+            evidence_pack_path=result.evidence_pack_path,
+            error_message=None,
+            user_id=None,  # auth/multi-tenant later
+        )
         
         return {
             "run_id": run_id,
             "summary": result.summary,
             "evidence_pack_available": True,
+            "status": "completed",
         }
     
     except Exception as e:
@@ -93,26 +105,26 @@ async def create_run(
 
 
 @app.get("/api/v1/runs/{run_id}")
-def get_run(run_id: str):
+def get_run_details(run_id: str):
     """
     Get the status and summary of a reconciliation run.
     
     Returns:
         JSON with run_id, summary, status, and evidence_pack_available
     """
-    if run_id not in RUNS:
+    record = get_run_from_db(run_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Run not found")
     
-    result = RUNS[run_id]
-    
-    # Check if evidence pack file exists
-    evidence_pack_exists = Path(result.evidence_pack_path).exists() if result.evidence_pack_path else False
-    
     return {
-        "run_id": run_id,
-        "summary": result.summary,
-        "status": "completed",
-        "evidence_pack_available": evidence_pack_exists,
+        "run_id": record["id"],
+        "status": record["status"],
+        "plan_name": record["plan_name"],
+        "summary": record["summary"],
+        "manifest": record["manifest"],
+        "evidence_pack_available": record["evidence_pack_path"] is not None and record["evidence_pack_path"] != "",
+        "created_at": record["created_at"],
+        "updated_at": record["updated_at"],
     }
 
 
@@ -124,12 +136,15 @@ def download_evidence(run_id: str):
     Returns:
         ZIP file download
     """
-    if run_id not in RUNS:
+    record = get_run_from_db(run_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Run not found")
     
-    result = RUNS[run_id]
-    evidence_path = Path(result.evidence_pack_path)
+    path = record["evidence_pack_path"]
+    if not path:
+        raise HTTPException(status_code=404, detail="Evidence pack not available")
     
+    evidence_path = Path(path)
     if not evidence_path.exists():
         raise HTTPException(
             status_code=404,
