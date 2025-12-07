@@ -362,25 +362,28 @@ def run_prooflink_engine(
     real_timing_metrics: Dict[str, Any] = {}
     
     # Get the timing_summary path from reconciliation_results
+    # This path is set in run_reconciliation when timing analysis completes
     timing_summary_path = reconciliation_results.get("timing_summary", "")
     
-    # Try to load from the timing summary JSON file
+    # Try to load from the timing summary JSON file (written by contribution_timing_analyzer_v2)
     if timing_summary_path:
         try:
             with open(timing_summary_path, "r", encoding="utf-8") as f:
                 ts = json.load(f)
             if isinstance(ts, dict):
+                # The JSON file uses "risk_level" but we want "timing_risk" in our summary
                 real_timing_metrics = {
                     "total_rows": ts.get("total_rows", 0),
                     "late_rows": ts.get("late_rows", 0),
                     "missing_deposits": ts.get("missing_deposits", 0),
-                    "timing_risk": ts.get("timing_risk", "N/A"),
+                    "timing_risk": ts.get("timing_risk") or ts.get("risk_level", "N/A"),
                 }
         except Exception:
             # If we fail to read or parse, we fall back below
             real_timing_metrics = {}
     
     # If an in-memory timing_metrics dict already exists and is non-empty, prefer that
+    # (This handles cases where the JSON file wasn't written but we have the dict from timing_result)
     timing_metrics_raw = reconciliation_results.get("timing_metrics")
     if not real_timing_metrics and isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
         real_timing_metrics = timing_metrics_raw.copy()
