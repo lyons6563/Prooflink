@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 import hashlib
 import json
+import os
 import numpy as np
 import re
 import traceback
@@ -278,6 +279,28 @@ def run_reconciliation_with_summary(
         }
 
 
+def _find_timing_summary(run_root: str) -> Optional[Dict[str, Any]]:
+    """
+    Search for timing_summary.json under the given run_root directory.
+    Returns the parsed dict if found and valid, otherwise None.
+    """
+    if not run_root or not os.path.isdir(run_root):
+        return None
+
+    for root, dirs, files in os.walk(run_root):
+        if "timing_summary.json" in files:
+            timing_path = os.path.join(root, "timing_summary.json")
+            try:
+                with open(timing_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                return None
+
+    return None
+
+
 def run_prooflink_engine(
     payroll_path: str,
     rk_path: str,
@@ -358,51 +381,11 @@ def run_prooflink_engine(
     mismatches = reconciliation_results.get("mismatches", {})
     timing = reconciliation_results.get("timing", {})
     
-    # Get real timing_metrics - load from timing_summary.json file (source of truth)
-    real_timing_metrics: Dict[str, Any] = {}
-    
-    # Get the timing_summary path from reconciliation_results
-    # This path is set in run_reconciliation when timing analysis completes
-    timing_summary_path = reconciliation_results.get("timing_summary", "")
-    
-    # Try to load from the timing summary JSON file (written by contribution_timing_analyzer_v2)
-    if timing_summary_path:
-        try:
-            with open(timing_summary_path, "r", encoding="utf-8") as f:
-                ts = json.load(f)
-            if isinstance(ts, dict):
-                # The JSON file uses "risk_level" but we want "timing_risk" in our summary
-                real_timing_metrics = {
-                    "total_rows": ts.get("total_rows", 0),
-                    "late_rows": ts.get("late_rows", 0),
-                    "missing_deposits": ts.get("missing_deposits", 0),
-                    "timing_risk": ts.get("timing_risk") or ts.get("risk_level", "N/A"),
-                }
-        except Exception:
-            # If we fail to read or parse, we fall back below
-            real_timing_metrics = {}
-    
-    # If an in-memory timing_metrics dict already exists and is non-empty, prefer that
-    # (This handles cases where the JSON file wasn't written but we have the dict from timing_result)
-    timing_metrics_raw = reconciliation_results.get("timing_metrics")
-    if not real_timing_metrics and isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
-        real_timing_metrics = timing_metrics_raw.copy()
-        # Ensure all keys exist
-        real_timing_metrics.setdefault("total_rows", 0)
-        real_timing_metrics.setdefault("late_rows", 0)
-        real_timing_metrics.setdefault("missing_deposits", 0)
-        real_timing_metrics.setdefault("timing_risk", "N/A")
-    
-    # Final fallback if nothing was loaded
-    if not real_timing_metrics:
-        real_timing_metrics = {
-            "total_rows": 0,
-            "late_rows": 0,
-            "missing_deposits": 0,
-            "timing_risk": "N/A",
-        }
-    
-    timing_metrics = real_timing_metrics
+    # Build summary dict from reconciliation_results
+    vendor_detection = reconciliation_results.get("vendor_detection", {})
+    totals = reconciliation_results.get("totals", {})
+    mismatches = reconciliation_results.get("mismatches", {})
+    timing = reconciliation_results.get("timing", {})
     
     # Extract Secure 2.0 exceptions
     secure20_exceptions_raw = reconciliation_results.get("secure20_exceptions", [])
@@ -427,8 +410,47 @@ def run_prooflink_engine(
         "run_id": run_id,
     }
     
-    # Always include timing_metrics with normalized values
-    summary["timing_metrics"] = timing_metrics
+    # Load real timing_metrics from timing_summary.json file in the run directory
+    real_timing_metrics: Dict[str, Any] = {}
+    
+    # Derive run root directory from evidence_pack_path
+    # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
+    # We want the directory one level above "output": "api_uploads\\<run_id>"
+    if evidence_pack_path:
+        output_dir = os.path.dirname(evidence_pack_path)
+        run_root = os.path.dirname(output_dir)
+        
+        # Search for timing_summary.json in the run directory
+        timing_summary = _find_timing_summary(run_root)
+        if isinstance(timing_summary, dict):
+            real_timing_metrics = {
+                "total_rows": timing_summary.get("total_rows", 0),
+                "late_rows": timing_summary.get("late_rows", 0),
+                "missing_deposits": timing_summary.get("missing_deposits", 0),
+                "timing_risk": timing_summary.get("timing_risk") or timing_summary.get("risk_level", "N/A"),
+            }
+    
+    # If there is already an in-memory timing_metrics dict that is non-empty, prefer that
+    timing_metrics_raw = reconciliation_results.get("timing_metrics")
+    if not real_timing_metrics and isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
+        real_timing_metrics = timing_metrics_raw.copy()
+        # Ensure all keys exist
+        real_timing_metrics.setdefault("total_rows", 0)
+        real_timing_metrics.setdefault("late_rows", 0)
+        real_timing_metrics.setdefault("missing_deposits", 0)
+        real_timing_metrics.setdefault("timing_risk", "N/A")
+    
+    # Final fallback if nothing was loaded
+    if not real_timing_metrics:
+        real_timing_metrics = {
+            "total_rows": 0,
+            "late_rows": 0,
+            "missing_deposits": 0,
+            "timing_risk": "N/A",
+        }
+    
+    # Always include timing_metrics with real values (or defaults if not found)
+    summary["timing_metrics"] = real_timing_metrics
     
     # Include timing dict if it has additional fields beyond late_deferral_count
     if timing:
