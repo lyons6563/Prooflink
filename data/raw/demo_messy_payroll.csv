@@ -1,0 +1,4 @@
+Employee_ID,Full_Name,Gross_Pay,HCE_Flag,Pay_Date,EE_PreTax_Def,EE_Roth_Def,Loan_Repayment
+2001,Bob Good,3200,N,2025-11-26,160,80,40
+2002,Charlie Missing,3000,N,2025-11-26,150,70,0
+2003,Danny Wrong,2800,N,2025-11-26,140,60,20
