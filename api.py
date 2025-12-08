@@ -6,11 +6,13 @@ A minimal REST API that wraps the ProofLink reconciliation engine.
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Depends, status
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import OAuth2PasswordBearer
 from uuid import uuid4
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
 import jwt
+from jwt import PyJWTError
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
@@ -51,6 +53,38 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+):
+    """
+    Dependency to get the current authenticated user from JWT token.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str | None = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except PyJWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if user is None:
+        raise credentials_exception
+
+    return user
 
 
 # Pydantic models for auth
