@@ -388,31 +388,49 @@ def run_prooflink_engine(
     secure20_exceptions_csv = reconciliation_results.get("secure20_exceptions_csv")
     
     # Run contribution timing analysis directly to ensure it executes and we capture metrics
-    real_timing_metrics: Dict[str, Any] = {}
-    timing_result = None
-    
     # Derive output directory from evidence_pack_path
     # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
     # output_dir should be: "api_uploads\\<run_id>\\output"
     output_dir = os.path.dirname(evidence_pack_path) if evidence_pack_path else config.output_dir
     
+    # Debug instrumentation for timing analysis
+    timing_debug: Dict[str, Any] = {
+        "called": False,
+        "exception": None,
+        "result_type": None,
+        "result_keys": None,
+        "payroll_path": str(payroll_csv),
+        "rk_path": str(rk_csv),
+        "output_dir": output_dir,
+    }
+    
+    real_timing_metrics: Dict[str, Any] = {}
+    timing_result = None
+    
     try:
-        # Call run_timing_analysis directly to ensure it runs
+        timing_debug["called"] = True
         timing_result = run_timing_analysis(
             payroll_path=str(payroll_csv),
             rk_path=str(rk_csv),
             output_dir=output_dir,
             late_threshold_days=5,  # Default Secure 2.0 threshold
         )
-        # Capture the returned timing metrics
-        if isinstance(timing_result, dict) and timing_result:
+        
+        timing_debug["result_type"] = str(type(timing_result))
+        
+        if isinstance(timing_result, dict):
+            timing_debug["result_keys"] = list(timing_result.keys())
             real_timing_metrics = {
                 "total_rows": timing_result.get("total_rows", 0),
                 "late_rows": timing_result.get("late_rows", 0),
                 "missing_deposits": timing_result.get("missing_deposits", 0),
                 "timing_risk": timing_result.get("timing_risk", "N/A"),
             }
+        else:
+            timing_debug["result_keys"] = None
+            
     except Exception as exc:
+        timing_debug["exception"] = repr(exc)
         # Log the error but continue - we'll fall back to defaults or reconciliation_results
         logger.warning(f"Timing analysis failed in run_prooflink_engine: {exc}")
         real_timing_metrics = {}
@@ -456,6 +474,7 @@ def run_prooflink_engine(
     
     # Always include timing_metrics with real values (or defaults if not found)
     summary["timing_metrics"] = real_timing_metrics
+    summary["timing_debug"] = timing_debug
     
     # Include timing dict if it has additional fields beyond late_deferral_count
     if timing:

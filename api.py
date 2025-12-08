@@ -4,19 +4,72 @@ ProofLink FastAPI Backend
 A minimal REST API that wraps the ProofLink reconciliation engine.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Depends, status
 from fastapi.responses import FileResponse, JSONResponse
 from uuid import uuid4
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timedelta
+import jwt
+from pydantic import BaseModel, EmailStr
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 
 from main import EngineConfig, run_prooflink_engine, EngineResult
-from db import init_db, insert_run, get_run, list_runs
+from db import init_db, insert_run, get_run, list_runs, get_db
+from models import User
 
 app = FastAPI(title="ProofLink API", version="0.1")
 
 # Initialize database on startup
 init_db()
+
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt."""
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# JWT token configuration
+SECRET_KEY = "CHANGE_ME_TO_A_SECURE_RANDOM_VALUE"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a JWT access token."""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+# Pydantic models for auth
+class UserCreate(BaseModel):
+    """User registration model."""
+    email: EmailStr
+    password: str
+
+
+class UserLogin(BaseModel):
+    """User login model."""
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    """Token response model."""
+    access_token: str
+    token_type: str = "bearer"
 
 
 @app.post("/api/v1/runs")
@@ -211,4 +264,52 @@ def root():
 def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# ==============================
+# Authentication endpoints
+# ==============================
+
+@app.post("/auth/register", response_model=TokenResponse)
+def register_user(payload: UserCreate, db: Session = Depends(get_db)):
+    """
+    Register a new user and return an access token.
+    """
+    # Check if user exists
+    existing = db.query(User).filter(User.email == payload.email.lower()).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this email already exists."
+        )
+    
+    # Create new user
+    user = User(
+        email=payload.email.lower(),
+        hashed_password=hash_password(payload.password),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    # Generate token
+    token = create_access_token({"sub": str(user.id)})
+    return TokenResponse(access_token=token)
+
+
+@app.post("/auth/login", response_model=TokenResponse)
+def login_user(payload: UserLogin, db: Session = Depends(get_db)):
+    """
+    Login a user and return an access token.
+    """
+    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    if not user or not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password."
+        )
+    
+    # Generate token
+    token = create_access_token({"sub": str(user.id)})
+    return TokenResponse(access_token=token)
 

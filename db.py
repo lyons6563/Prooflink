@@ -2,6 +2,7 @@
 SQLite database helper for ProofLink API runs.
 
 Provides simple, stdlib-only persistence for reconciliation runs.
+Also includes SQLAlchemy ORM setup for User authentication.
 """
 
 import sqlite3
@@ -10,7 +11,28 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+
+from models import Base, User
+
 DB_PATH = "prooflink_runs.db"
+
+# SQLAlchemy setup for ORM models (User)
+SQLALCHEMY_DATABASE_URL = f"sqlite:///./{DB_PATH}"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def get_db() -> Session:
+    """Dependency for getting SQLAlchemy database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @contextmanager
@@ -25,6 +47,7 @@ def get_conn():
 
 def init_db() -> None:
     """Initialize the database schema if it doesn't exist."""
+    # Create runs table (raw SQLite)
     with get_conn() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -46,6 +69,9 @@ def init_db() -> None:
             """
         )
         conn.commit()
+    
+    # Create ORM tables (User model)
+    Base.metadata.create_all(bind=engine)
 
 
 def insert_run(
