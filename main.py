@@ -1235,6 +1235,7 @@ COLUMN_MAP = {
         "participant_id",
         "participant",
         "part_id",
+        # Note: "Employee_ID" and "Participant_ID" will match via case-insensitive matching
     ],
 
     # Dates
@@ -1248,6 +1249,7 @@ COLUMN_MAP = {
         "pay period end date",
         "pay period date",
         "date",
+        # Note: "Pay_Date" will match via case-insensitive matching
     ],
     "deposit_date": [
         "deposit_date",
@@ -1259,6 +1261,7 @@ COLUMN_MAP = {
         "funding date",
         "contribution date",
         "transaction_effective_date",   # <-- add this line
+        # Note: "Deposit_Date" will match via case-insensitive matching
     ],
 
     # PAYROLL side amounts
@@ -1272,6 +1275,7 @@ COLUMN_MAP = {
         "pre tax",
         "amount",
         "457b_ee_pretax_amt",
+        "ee_pretax_def",  # New: EE_PreTax_Def
     ],
     "payroll_roth": [
         "roth_defl",
@@ -1281,12 +1285,14 @@ COLUMN_MAP = {
         "roth contribution",
         "roth",
         "457b_ee_roth_amt",
+        "ee_roth_def",  # New: EE_Roth_Def
     ],
     "payroll_loan": [
         "loan_pmt",
         "loan repay $",
         "loan repayment",
         "457b_loan_repay_amt",         # <-- add this line
+        "loan_repayment",  # New: Loan_Repayment
     ],
 
     # Secure 2.0 fields (payroll side only)
@@ -1330,6 +1336,7 @@ COLUMN_MAP = {
         "pre tax cont",
         "pre-tax",
         "amount",
+        "ee_pretax_def",  # New: EE_PreTax_Def
     ],
     "rk_roth": [
         "ee_roth",
@@ -1339,10 +1346,12 @@ COLUMN_MAP = {
         "roth contribution",
         "roth cont",
         "roth",
+        "ee_roth_def",  # New: EE_Roth_Def
     ],
     "rk_loan": [
         "loan_contr",
         "loan repayment",
+        "loan_repayment",  # New: Loan_Repayment
     ],
 
     # Fallback single-amount column (legacy/simple files)
@@ -1355,6 +1364,7 @@ COLUMN_MAP = {
         "pre-tax cont",
         "roth cont",
         "contribution_amount",        # <-- add this line (RK 457b file)
+        "total_deposit_amount",  # New: Total_Deposit_Amount
     ],
 }
 
@@ -1462,6 +1472,7 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         "contribution_amount",
         "pretax",
         "employee_pre_tax",
+        "ee_pretax_def",  # New variant: EE_PreTax_Def
     }
     
     # Roth column variants
@@ -1470,6 +1481,7 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         "roth_deferral",
         "roth",
         "roth_contribution",
+        "ee_roth_def",  # New variant: EE_Roth_Def
     }
     
     # Build rename mapping

@@ -39,6 +39,7 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         "contribution_amount",
         "pretax",
         "employee_pre_tax",
+        "ee_pretax_def",  # New variant: EE_PreTax_Def
     }
     
     # Roth column variants
@@ -47,6 +48,7 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         "roth_deferral",
         "roth",
         "roth_contribution",
+        "ee_roth_def",  # New variant: EE_Roth_Def
     }
     
     # Build rename mapping
@@ -194,18 +196,22 @@ def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFram
         canonical = None
 
         # Exact / near-exact matches on raw header text
-        if original in ("ee deferral $", "ee deferral", "employee deferral $"):
+        if original in ("ee deferral $", "ee deferral", "employee deferral $", "ee_pretax_def", "ee pretax def"):
             canonical = "def_amount"
-        elif original in ("ee roth $", "ee roth", "employee roth $"):
+        elif original in ("ee roth $", "ee roth", "employee roth $", "ee_roth_def", "ee roth def"):
             canonical = "roth_amount"
-        elif original in ("pay date", "payroll date", "pay period end date", "pay period ending", "check date", "payroll run date"):
+        elif original in ("pay date", "payroll date", "pay period end date", "pay period ending", "check date", "payroll run date", "pay_date", "pay date"):
             canonical = "pay_date"
+        elif original in ("deposit_date", "deposit date"):
+            canonical = "deposit_date"
+        elif original in ("total_deposit_amount", "total deposit amount"):
+            canonical = "amount"
 
         # If canonical not set by original-name checks, fall back to the existing
         # normalized-key pattern logic (using _normalize_col_key and key-based patterns).
         if canonical is None:
             # employee id patterns
-            if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid"]):
+            if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid", "participantid"]):
                 canonical = "employee_id"
 
             # pay date patterns
@@ -217,9 +223,11 @@ def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFram
                 canonical = "def_amount"
             elif key.startswith("deferralamount"):
                 canonical = "def_amount"
+            elif "pretax" in key and "def" in key:  # Handles "ee_pretax_def"
+                canonical = "def_amount"
 
             # roth amount patterns
-            elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key):
+            elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key or "def" in key):
                 canonical = "roth_amount"
 
             # loan amount patterns
@@ -227,6 +235,14 @@ def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFram
                 canonical = "loan_amount"
             elif key == "loanamount":
                 canonical = "loan_amount"
+            
+            # deposit date patterns
+            elif "deposit" in key and "date" in key:
+                canonical = "deposit_date"
+            
+            # total deposit amount patterns
+            elif "total" in key and "deposit" in key and "amount" in key:
+                canonical = "amount"
 
         # Only add if canonical is determined and doesn't already exist
         if canonical is not None and canonical not in df.columns:
