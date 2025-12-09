@@ -1,0 +1,24 @@
+{
+  "run_timestamp_utc": "2025-12-08T22:21:36+00:00",
+  "payroll_file": "api_uploads\\839bb376-4841-4f7e-a406-dde92b873d67\\demo_secure20_payroll.csv",
+  "recordkeeper_file": "api_uploads\\839bb376-4841-4f7e-a406-dde92b873d67\\demo_secure20_rk.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "missing": true
+    },
+    "loan_mismatches": {
+      "missing": true
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "api_uploads\\839bb376-4841-4f7e-a406-dde92b873d67\\output\\reconciliation_report.xlsx",
+      "sha256": "24e186b345e527b0e3c141e5eb00617daa7cf45a28eccb221610ea24ac854ba1"
+    }
+  }
+}

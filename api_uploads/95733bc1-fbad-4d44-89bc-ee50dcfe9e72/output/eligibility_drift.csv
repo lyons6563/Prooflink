@@ -1,0 +1,2 @@
+employee_id,employment_status,termination_date,pay_date,days_after_termination,def_amount,roth_amount,total_contribution
+E9001,Terminated,2025-01-20,2025-02-07,18.0,160,0.0,160.0

@@ -1,0 +1,5 @@
+employee_id,age,is_hce,pay_date,def_amount,roth_amount,loan_amount,deferral_pre,deferral_roth,employment_status,termination_date
+E9001,45,0,2025-01-10,150,0,0,150,0,Active,
+E9001,45,0,2025-01-24,0,0,0,0,0,Terminated,2025-01-20
+E9001,45,0,2025-02-07,160,0,0,160,0,Terminated,2025-01-20
+E9002,39,0,2025-02-07,120,30,0,120,30,Active,

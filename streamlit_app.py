@@ -11,6 +11,7 @@ import traceback
 from datetime import datetime
 import json
 import requests
+import os
 
 # API client configuration
 API_BASE_URL = "http://127.0.0.1:8000"
@@ -1012,6 +1013,27 @@ def render_reconciliation_tab():
             
             with st.expander("View Secure 2.0 exception details (raw)", expanded=False):
                 st.json(secure_exceptions)
+        
+        # Eligibility Drift Detection
+        st.divider()
+        st.markdown("### Eligibility Drift Detection")
+        
+        drift_count = summary_dict.get("eligibility_drift_count", 0)
+        drift_path = summary_dict.get("eligibility_drift")
+        
+        st.markdown(f"**Eligibility drift rows:** {drift_count}")
+        
+        if drift_count > 0 and drift_path and os.path.exists(drift_path):
+            run_id = summary_dict.get("run_id", "unknown")
+            with open(drift_path, "rb") as f:
+                drift_data = f.read()
+            st.download_button(
+                label="Download eligibility drift CSV",
+                data=drift_data,
+                file_name="eligibility_drift.csv",
+                mime="text/csv",
+                key=f"eligibility_drift_{run_id}",
+            )
         
         # Evidence pack download
         st.divider()

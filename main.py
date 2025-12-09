@@ -25,6 +25,8 @@ from vendor_detection import detect_vendors, VendorDetectionResult
 
 from contribution_timing_analyzer_v2 import run_timing_analysis
 
+from eligibility_drift import detect_eligibility_drift
+
 
 @dataclass
 class RunSummary:
@@ -42,6 +44,7 @@ class RunSummary:
     late_deferral_count: int
     evidence_pack_path: Path
     run_id: str  # e.g. timestamp or UUID
+    eligibility_drift_count: int = 0
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert RunSummary to a JSON-serializable dict."""
@@ -58,7 +61,8 @@ class RunSummary:
             "deferral_mismatch_count": self.deferral_mismatch_count,
             "loan_mismatch_count": self.loan_mismatch_count,
             "late_deferral_count": self.late_deferral_count,
-            "evidence_pack_path": str(self.evidence_pack_path),
+            "eligibility_drift_count": self.eligibility_drift_count,
+            "evidence_pack_path": str(self.evidence_pack_path) if self.evidence_pack_path else "",
             "run_id": self.run_id,
         }
 
@@ -236,6 +240,7 @@ def run_reconciliation_with_summary(
             deferral_mismatch_count=int(mismatches.get("deferral_count", 0)),
             loan_mismatch_count=int(mismatches.get("loan_count", 0)),
             late_deferral_count=int(timing.get("late_deferral_count", 0)),
+            eligibility_drift_count=int(reconciliation_results.get("eligibility_drift_count", 0)),
             evidence_pack_path=evidence_pack_path,
             run_id=reconciliation_results.get("run_id", ""),
         )
@@ -255,6 +260,7 @@ def run_reconciliation_with_summary(
             "deferral_mismatch_count": run_summary.deferral_mismatch_count,
             "loan_mismatch_count": run_summary.loan_mismatch_count,
             "late_deferral_count": run_summary.late_deferral_count,
+            "eligibility_drift_count": run_summary.eligibility_drift_count,
             "evidence_pack_path": str(run_summary.evidence_pack_path),
             "run_id": run_summary.run_id,
         }
@@ -468,6 +474,7 @@ def run_prooflink_engine(
         "deferral_mismatch_count": int(mismatches.get("deferral_count", 0)),
         "loan_mismatch_count": int(mismatches.get("loan_count", 0)),
         "late_deferral_count": int(timing.get("late_deferral_count", 0)),
+        "eligibility_drift_count": int(reconciliation_results.get("eligibility_drift_count", 0)),
         "evidence_pack_path": evidence_pack_path,
         "run_id": run_id,
     }
@@ -596,6 +603,28 @@ def run_reconciliation(
 
     # Load raw files DIRECTLY from the given paths
     payroll_df = pd.read_csv(payroll_path)
+    
+    # -------------------------------
+    # Eligibility drift detection (run on raw payroll before any normalization)
+    # -------------------------------
+    try:
+        drift_df = detect_eligibility_drift(payroll_df.copy(), grace_days=0)
+    except Exception as e:
+        print(f"[WARN] Eligibility drift detection failed: {e}")
+        drift_df = None
+
+    eligibility_drift_path = None
+    eligibility_drift_count = 0
+
+    if drift_df is not None and not drift_df.empty:
+        os.makedirs(output_dir, exist_ok=True)
+        eligibility_drift_path = os.path.join(output_dir, "eligibility_drift.csv")
+        drift_df.to_csv(eligibility_drift_path, index=False)
+        eligibility_drift_count = int(len(drift_df))
+        print(f"[INFO] Eligibility drift report written to: {eligibility_drift_path}")
+    else:
+        print("[INFO] No eligibility drift rows detected.")
+    
     rk_df = pd.read_csv(rk_path)
     
     # Normalize column names to handle flexible deferral/roth variants
@@ -963,11 +992,15 @@ def run_reconciliation(
         "mismatches": mismatches,
         "timing": timing,
         "secure20_exceptions": secure20_exceptions,
+        "eligibility_drift_count": eligibility_drift_count,
     }
     
     # Add Secure 2.0 exceptions CSV path if file was created
     if secure20_exceptions_path is not None:
         results["secure20_exceptions_csv"] = str(secure20_exceptions_path)
+    
+    # Add eligibility drift CSV path if file was created
+    results["eligibility_drift"] = str(eligibility_drift_path) if eligibility_drift_path else None
 
     # Run timing analysis and add results
     try:
@@ -1022,6 +1055,7 @@ def build_evidence_pack(results: dict) -> Path:
       - only-in-* CSVs
       - Secure 2.0 exceptions CSV (if present)
       - manifest JSON (if present)
+      - eligibility drift CSV (if present)
     """
     zip_path = DATA_OUT / "prooflink_evidence_pack.zip"
 
@@ -1044,6 +1078,7 @@ def build_evidence_pack(results: dict) -> Path:
         "manifest",
         "late_contributions",
         "timing_summary",
+        "eligibility_drift",
     ]
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
