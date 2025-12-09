@@ -1,0 +1,24 @@
+{
+  "run_timestamp_utc": "2025-11-25T00:51:01+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_Payroll 11.24.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_recordkeeper11.24.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "missing": true
+    },
+    "loan_mismatches": {
+      "missing": true
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\reconciliation_report.xlsx",
+      "sha256": "ca7dc88d8b6a0a54e391afcdd0fd6824dde96bc7e43d44a981879427d8d7669a"
+    }
+  }
+}

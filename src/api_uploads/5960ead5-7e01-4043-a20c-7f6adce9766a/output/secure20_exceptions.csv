@@ -1,0 +1,4 @@
+employee_id,pay_date,catchup_pretax,catchup_roth,issue_code,description
+3001,2025-11-26,200.0,0.0,HCE_PRETAX_CATCHUP,HCE has pre-tax catch-up; Secure 2.0 requires Roth catch-up for HCEs.
+3002,2025-11-26,220.0,0.0,HCE_PRETAX_CATCHUP,HCE has pre-tax catch-up; Secure 2.0 requires Roth catch-up for HCEs.
+3003,2025-11-26,150.0,0.0,HCE_PRETAX_CATCHUP,HCE has pre-tax catch-up; Secure 2.0 requires Roth catch-up for HCEs.

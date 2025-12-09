@@ -1,0 +1,85 @@
+{
+  "run_timestamp_utc": "2025-11-24T16:20:04+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_py spreadsheet - Sheet1.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_rk - Sheet1.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\deferral_mismatches.csv",
+      "sha256": "7bf01022454396fea50b17b388f224f6f81c4c80da30ad65700fee63e17f0775",
+      "row_count": 2,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "a23c0418689a6efe6329b223e6f6413b0a81ac7460e2f5d1250e78ed07fe682a",
+      "row_hash_sample": [
+        "a135278b36ed932374d76c28e3231b14f7c098f58d044442126906a7195e3d7b",
+        "baf5880b199266f0cff04b267bc290e58a0f5ca0b2d271fd98e9cab92e7189fd"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\loan_mismatches.csv",
+      "sha256": "685ca7eecc5fc2029f6fe84a492abd6c222e9644be7e88f1783c5984cba8777c",
+      "row_count": 0,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "",
+      "row_hash_sample": []
+    },
+    "late_deferrals": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\late_deferrals_contributions.csv",
+      "sha256": "b82e688be0dd450c1b2e36e2b2508a360f8bd29809be3bd9ebc4ab0904e743ea",
+      "row_count": 3,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "b8915c737114b848743effac2513eb9f052d7c0177289ae1db2cf0ab772243b2",
+      "row_hash_sample": [
+        "f03d8b27348622025f3b5ed33c64fe206b03be2ab5438ba234200ef9fd74a461",
+        "21755dc011a3834dd15a6ecbafaedcc7036cd6c0f6409ca2dd12f7934125723c",
+        "0b2e88924eb1d89c78127e9c42e787495488becfc734a52862ff7ce48a7a7e63"
+      ]
+    },
+    "late_loans": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\late_loans_contributions.csv",
+      "sha256": "e67f1282cdd2b0562cd5b74e51d8f15a69495b22f67f33b5af2a191a2946e0e5",
+      "row_count": 3,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "a3e2a8b4a95c9c5b03fbd03b6d194705ee2ba0e68479ede89a86377970246f36",
+      "row_hash_sample": [
+        "7221fc139deafc00ab764cf2dd152748f0c20fd29d579b10a51e9bf3b3b560c4",
+        "d7e112fc246fdce0f2eb6f963a5aa1838c250b017e857cfa3a1f739fa5000e7c",
+        "bbfed818887e1bb66047cee19dd87533bd589da2288d2d1a70e21a01575f00fe"
+      ]
+    },
+    "excel_report": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\reconciliation_report.xlsx",
+      "sha256": "570a6d21a27da2d89211b8492dc5a6ad74ba68606206240156a2cc7492e83d12"
+    }
+  }
+}

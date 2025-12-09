@@ -1,0 +1,12 @@
+sstreamlit
+pandas
+numpy
+python-dateutil
+pytz
+openpyxl
+PyYAML
+altair
+requests
+watchdog
+
+

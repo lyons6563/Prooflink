@@ -1,0 +1,98 @@
+{
+  "run_timestamp_utc": "2025-11-17T23:58:00+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\payroll_adp_synthetic_400.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\rk_empower_synthetic_400.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\deferral_mismatches.csv",
+      "sha256": "f2d42061de7abcad60c73c5928c4b14f76e1b058ca5d52d1c06cfc53e56a2018",
+      "row_count": 1883,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "ef590e8413e81a9e3b3b45ad135e211e53ec99d5e7bb3bbc77f4fc61599a88f2",
+      "row_hash_sample": [
+        "4ee3613c41c1df087f87f63a0d6745edc1e6137b343123fe120e6f3726d8d518",
+        "f8e79d40626c7b6cf8268a706216f660b35a5f9fd2d1d92aad6e8ae79021bb33",
+        "5636cf9a8b76e84c6518a56f0a35f8950e4d61f6825f8d59cc1afbe5bf790358",
+        "a5d0715c0296e072d7188de3c0a5842ab30e66922bdaf19ab81a4b115f9b2c3a",
+        "866c409df9d8564b22088b8ff013bad0d6241661075944f01beeb73e2591c311"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\loan_mismatches.csv",
+      "sha256": "c73a18ea468a483f59351e6039fd7ba877d66843261133e97c62dd0c0131fbee",
+      "row_count": 108,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "d0fd044bbcb208a56d15926fb39048755ce8cde2f5fc861e98d822bc74ef4efd",
+      "row_hash_sample": [
+        "ad83f11cf939088104b9e7d0d57070c47b594d3743678ab4e797cfebf3ab4929",
+        "b1c752dbf3c5a68e5f0212df59e44aecf2e067127d3bdd3f95c7b89f107b17f2",
+        "e2df1e5ad1adccd9862dc0934324f04819fc245b57555b45c53a36a06a641f07",
+        "602eff3c1a065eac4442c08e0214c56a7c915e983c4e49012f7dea10c824c1af",
+        "d74613c726515e71c9d6345ec86a6078c3a1b4f0737f60b834cf4f86ec90a59e"
+      ]
+    },
+    "late_deferrals": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\late_deferrals_contributions.csv",
+      "sha256": "f499f9884ee5ef8cf164da2bcd77c5ccea3d85235f0cc19574e41b22794e97e9",
+      "row_count": 2027,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "228fa55bae75a47b16df33cd6efea2817bc33bea8c4a202d5911ebf22e38d74a",
+      "row_hash_sample": [
+        "39c4f9e93fb772351894baf98e55f0719cddfb7111edea4b448969d95e325b0a",
+        "d387467db2d1739b3f90269fc53501079cf97577b694b144821e7dc85e295d58",
+        "367913777831991b58c60ae9eab513acfffe35ff1c6e7024efe0f1480c316079",
+        "f7d49ce1af232f0ae61056008c14f62a52ff7bc40b8d588740296881e76c198d",
+        "51d98da7226a44be512ea8cb3eb176247e5384d7b5b7b5d36791d6b1cb2f1ee8"
+      ]
+    },
+    "late_loans": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\late_loans_contributions.csv",
+      "sha256": "bfd48c391b4ee310001c4d0298463ffb8bfb7677f82e006e81c6e23d9dedb8d1",
+      "row_count": 2027,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "business_days_lag",
+        "deposit_date",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "0c3b9f4034a6267bb55932826fb51e6306fdac342159e58a259e941027e3eeb5",
+      "row_hash_sample": [
+        "f020251a2cf9c6c7b2c918dbc5fa9e1cbc745c52aaa5608943160b9221931d2a",
+        "754a405fdb42d8a6bbc7b4712a4f1c67a9fc2ddfe1e08a7315639eb5035c399e",
+        "d26536e92ce27018ddf5a64600e4504e10586ae2952d5c2128ac2407da838e6f",
+        "a22ea1215792dd47510ef3eb015e2c977d846c89420f8e481c3d9f0febab7fa3",
+        "593d0867912439607d2d12626e7ff5e03445fd48dd8195d1679d9c373497d0da"
+      ]
+    },
+    "excel_report": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\reconciliation_report.xlsx",
+      "sha256": "299d213ba134d5ef9277dd2865a8642e3c567a97ad4a460a1d190f5cad379306"
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "run_timestamp_utc": "2025-11-25T20:48:37+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_uploaded_uploaded_uploaded_Payroll 11.24.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_uploaded_uploaded_uploaded_recordkeeper11.24.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\deferral_mismatches.csv",
+      "sha256": "cd39c05e55619880329f4db209937a19360dc77766ca0c022e0f43176a809119",
+      "row_count": 1,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id"
+      ],
+      "merkle_root": "6508ae9f11c8641fffa143e9cc3f8c967dad377e6523cc96b43026f220304d82",
+      "row_hash_sample": [
+        "6508ae9f11c8641fffa143e9cc3f8c967dad377e6523cc96b43026f220304d82"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\loan_mismatches.csv",
+      "sha256": "a250d4b2d59a9814a7592b43a9ca5d3951e6bc00af434a72f597378191022770",
+      "row_count": 3,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "deposit_date",
+        "employee_id"
+      ],
+      "merkle_root": "6e31a8409be35589f5c1d889049894d1efabfe7d469f30aac93b854e2046b6ca",
+      "row_hash_sample": [
+        "635ea85e64c957e7e4f17164c1d95870824eb83ab9550acb120581739fc2328b",
+        "b440e7f5162e95b6bacee88a7868c24d51a1474ab3fe0f3b84c07be96de217a7",
+        "eab872d461183a2dd15ab3843b962670298fd122e116ae5385921d7bbc7dbd75"
+      ]
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\processed\\reconciliation_report.xlsx",
+      "sha256": "3052363256420f4d0cc1a7b9168536aec58d6a250d55324be16e7685a375fc6c"
+    }
+  }
+}
