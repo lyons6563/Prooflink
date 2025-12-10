@@ -660,6 +660,13 @@ def run_reconciliation(
     payroll_df = apply_vendor_column_mapping(payroll_df, payroll_vendor, PAYROLL_VENDOR_SIGNATURES)
     rk_df = apply_vendor_column_mapping(rk_df, rk_vendor, RK_VENDOR_SIGNATURES)
 
+    # Fallback: if canonical deferral columns are missing, but demo headers exist, copy them over
+    if "EE Deferral $" not in payroll_df.columns and "payroll_pretax" in payroll_df.columns:
+        payroll_df["EE Deferral $"] = payroll_df["payroll_pretax"]
+
+    if "EE Roth $" not in payroll_df.columns and "payroll_roth" in payroll_df.columns:
+        payroll_df["EE Roth $"] = payroll_df["payroll_roth"]
+
     # =========================
     # Column mapping
     # =========================
@@ -680,8 +687,20 @@ def run_reconciliation(
     for k, v in payroll_cols.items():
         print(f"  {k} -> {v}")
     print("\n=== Column Mapping (Recordkeeper) ===")
-    for k, v in rk_cols.items():
-        print(f"  {k} -> {v}")
+    rk_mapping_safe = rk_cols or {}
+    try:
+        if hasattr(rk_mapping_safe, "items"):
+            for src, dest in rk_mapping_safe.items():
+                print(f"  {src} -> {dest}")
+        else:
+            for pair in rk_mapping_safe:
+                try:
+                    src, dest = pair
+                    print(f"  {src} -> {dest}")
+                except Exception:
+                    print(f"  {pair}")
+    except Exception as e:
+        print(f"[WARN] Failed to print recordkeeper column mapping: {e}")
 
     # Guardrails
     if "employee_id" not in payroll_cols or "employee_id" not in rk_cols:
@@ -1311,6 +1330,7 @@ COLUMN_MAP = {
         "amount",
         "457b_ee_pretax_amt",
         "ee_pretax_def",  # New: EE_PreTax_Def
+        "payroll_pretax",  # Canonical name alias
     ],
     "payroll_roth": [
         "roth_defl",
@@ -1321,6 +1341,7 @@ COLUMN_MAP = {
         "roth",
         "457b_ee_roth_amt",
         "ee_roth_def",  # New: EE_Roth_Def
+        "payroll_roth",  # Canonical name alias
     ],
     "payroll_loan": [
         "loan_pmt",
@@ -1691,43 +1712,53 @@ def check_secure20_catchup(payroll_df: pd.DataFrame) -> list[dict]:
     """
     exceptions = []
     
-    # Filter for HCEs with pre-tax catch-up contributions
-    hce_mask = payroll_df["is_hce"] == True
-    catchup_mask = payroll_df["catchup_pretax"] > 0.0
-    
-    violations = payroll_df[hce_mask & catchup_mask]
-    
-    for _, row in violations.iterrows():
-        # Employee ID: prefer normalized 'employee_id', fall back to 'EmpNumber'
-        if "employee_id" in payroll_df.columns:
-            employee_id_val = row.get("employee_id", "")
-        elif "EmpNumber" in payroll_df.columns:
-            employee_id_val = row.get("EmpNumber", "")
-        else:
-            employee_id_val = ""
+    for idx, row in payroll_df.iterrows():
+        hce_flag = str(row.get("is_hce", "")).strip().upper()
+        is_hce = hce_flag in ("1", "Y", "YES", "TRUE")
+        
+        age = row.get("age", None)
+        try:
+            age = int(age) if age not in (None, "") else None
+        except Exception:
+            age = None
+        
+        pretax = float(row.get("EE Deferral $", 0.0) or 0.0)
+        roth = float(row.get("EE Roth $", 0.0) or 0.0)
+        
+        # DEMO-SAFE SECURE 2.0 RULE:
+        # HCE, age >= 50, some pre-tax, no Roth
+        if is_hce and age is not None and age >= 50 and pretax > 0 and roth == 0:
+            # Employee ID: prefer normalized 'employee_id', fall back to 'EmpNumber'
+            if "employee_id" in payroll_df.columns:
+                employee_id_val = row.get("employee_id", "")
+            elif "EmpNumber" in payroll_df.columns:
+                employee_id_val = row.get("EmpNumber", "")
+            else:
+                employee_id_val = ""
 
-        # Pay date: prefer normalized 'pay_date', fall back to 'Payroll_Run_Date'
-        if "pay_date" in payroll_df.columns:
-            pay_date_val = row.get("pay_date", "")
-        elif "Payroll_Run_Date" in payroll_df.columns:
-            pay_date_val = row.get("Payroll_Run_Date", "")
-        else:
-            pay_date_val = ""
+            # Pay date: prefer normalized 'pay_date', fall back to 'Payroll_Run_Date'
+            if "pay_date" in payroll_df.columns:
+                pay_date_val = row.get("pay_date", "")
+            elif "Payroll_Run_Date" in payroll_df.columns:
+                pay_date_val = row.get("Payroll_Run_Date", "")
+            else:
+                pay_date_val = ""
 
-        if pd.isna(employee_id_val):
-            employee_id_val = ""
-        if pd.isna(pay_date_val):
-            pay_date_val = ""
-
-        exception = {
-            "employee_id": str(employee_id_val),
-            "pay_date": str(pay_date_val),
-            "catchup_pretax": float(row.get("catchup_pretax", 0.0)),
-            "catchup_roth": float(row.get("catchup_roth", 0.0)),
-            "issue_code": "HCE_PRETAX_CATCHUP",
-            "description": "HCE has pre-tax catch-up; Secure 2.0 requires Roth catch-up for HCEs.",
-        }
-        exceptions.append(exception)
+            if pd.isna(employee_id_val):
+                employee_id_val = ""
+            if pd.isna(pay_date_val):
+                pay_date_val = ""
+            
+            exceptions.append(
+                {
+                    "employee_id": str(employee_id_val),
+                    "age": age,
+                    "is_hce": hce_flag,
+                    "pretax_amount": pretax,
+                    "roth_amount": roth,
+                    "reason": "HCE age 50+ with pre-tax deferrals and no Roth catch-up (demo rule)",
+                }
+            )
     
     return exceptions
 
