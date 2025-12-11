@@ -9,6 +9,8 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 from datetime import datetime
 
+from issue_taxonomy import get_issue_metadata
+
 
 @dataclass
 class Secure20Violation:
@@ -123,7 +125,8 @@ def analyze_secure20_catchup(
         csv_path = output_dir / "secure20_violations.csv"
         pd.DataFrame(columns=[
             "employee_id", "age", "is_hce", "deferral_pretax", "deferral_roth",
-            "catchup_amount", "violation_type", "recommended_fix"
+            "catchup_amount", "violation_type", "recommended_fix",
+            "issue_category", "severity", "correction_hint"
         ]).to_csv(csv_path, index=False)
         return {
             "total_rows": 0,
@@ -231,6 +234,7 @@ def analyze_secure20_catchup(
                 "catchup_amount": v.catchup_amount,
                 "violation_type": v.violation_type,
                 "recommended_fix": v.recommended_fix,
+                **get_issue_metadata(v.violation_type),
             }
             for v in violations
         ]

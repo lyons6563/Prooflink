@@ -9,6 +9,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from issue_taxonomy import get_issue_metadata
+
 
 @dataclass
 class EligibilityDriftRecord:
@@ -93,7 +95,8 @@ def analyze_eligibility_drift(
         pd.DataFrame(columns=[
             "employee_id", "hire_date", "dob", "age_at_eligibility",
             "computed_eligibility_date", "first_deferral_date", "drift_days",
-            "issue_type", "recommended_fix"
+            "issue_type", "recommended_fix",
+            "issue_category", "severity", "correction_hint"
         ]).to_csv(csv_path, index=False)
         return {
             "total_rows": 0,
@@ -242,6 +245,7 @@ def analyze_eligibility_drift(
                 "drift_days": r.drift_days,
                 "issue_type": r.issue_type,
                 "recommended_fix": r.recommended_fix,
+                **get_issue_metadata(r.issue_type),
             }
             for r in drift_records
         ]

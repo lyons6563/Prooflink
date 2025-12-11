@@ -31,6 +31,12 @@ from secure20_catchup_analyzer import analyze_secure20_catchup
 
 from eligibility_drift_analyzer import analyze_eligibility_drift
 
+from comp_402g_analyzer import analyze_comp_402g_limits
+
+from match_reasonableness_analyzer import analyze_match_reasonableness
+
+from plan_exception_summary import build_plan_exception_summary
+
 
 @dataclass
 class RunSummary:
@@ -311,6 +317,26 @@ def _find_timing_summary(run_root: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _infer_plan_year_from_payroll(payroll_df: pd.DataFrame) -> Optional[int]:
+    """
+    Infer plan year from payroll dataframe by finding the latest year in pay_date column.
+    
+    Args:
+        payroll_df: Payroll dataframe with pay_date column
+        
+    Returns:
+        Latest year found in pay_date, or None if cannot be determined
+    """
+    if "pay_date" not in payroll_df.columns or payroll_df.empty:
+        return None
+    dates = pd.to_datetime(payroll_df["pay_date"], errors="coerce")
+    dates = dates.dropna()
+    if dates.empty:
+        return None
+    # Use the latest year present in the data as the plan_year
+    return int(dates.dt.year.max())
+
+
 def run_prooflink_engine(
     payroll_path: str,
     rk_path: str,
@@ -509,6 +535,119 @@ def run_prooflink_engine(
         output_dir=output_dir_path,
     )
     
+    # Run 402(g) compensation limit analysis
+    # Initialize default summary
+    comp_402g_summary = {
+        "total_participants": 0,
+        "excess_violation_count": 0,
+        "csv_path": None,
+    }
+    
+    # Infer plan year for 402(g) analysis and exception summary
+    inferred_plan_year = _infer_plan_year_from_payroll(processed_payroll_df)
+    
+    try:
+        if inferred_plan_year is not None and not processed_payroll_df.empty:
+            comp_402g_summary, comp_402g_csv_path = analyze_comp_402g_limits(
+                processed_payroll_df,
+                output_dir_path,
+                inferred_plan_year,
+            )
+            # Normalize path to string if needed
+            if comp_402g_csv_path is not None and "csv_path" in comp_402g_summary:
+                comp_402g_summary["csv_path"] = str(comp_402g_csv_path)
+            elif comp_402g_csv_path is not None:
+                comp_402g_summary["csv_path"] = str(comp_402g_csv_path)
+        else:
+            comp_402g_summary = {
+                "total_participants": 0,
+                "excess_violation_count": 0,
+                "csv_path": None,
+                "warning": "402(g) analysis skipped because plan year could not be inferred from payroll data.",
+            }
+    except Exception as exc:
+        print(f"[WARN] 402(g) analysis failed: {exc}")
+        comp_402g_summary = {
+            "total_participants": 0,
+            "excess_violation_count": 0,
+            "csv_path": None,
+            "warning": f"402(g) analysis failed: {exc}",
+        }
+    
+    # Run employer match reasonableness analysis
+    # Initialize default summary
+    match_summary = {
+        "total_rows": 0,
+        "under_match_count": 0,
+        "over_match_count": 0,
+        "csv_path": None,
+    }
+    
+    # Default match configuration
+    default_match_config = {
+        "match_type": "percent_of_comp",
+        "match_rate": 0.50,          # 50% match
+        "match_cap_pct": 0.06,       # on first 6% of comp
+        "absolute_tolerance": 5.00,  # $5
+        "relative_tolerance_pct": 0.15,  # 15%
+    }
+    
+    try:
+        if processed_payroll_df is not None and not processed_payroll_df.empty:
+            match_summary, match_csv_path = analyze_match_reasonableness(
+                processed_payroll_df,
+                output_dir_path,
+                plan_config=default_match_config,
+            )
+            # Normalize csv_path into the summary if needed
+            if match_csv_path is not None:
+                match_summary["csv_path"] = str(match_csv_path)
+        else:
+            match_summary = {
+                "total_rows": 0,
+                "under_match_count": 0,
+                "over_match_count": 0,
+                "csv_path": None,
+                "warning": "Match analysis skipped because processed payroll data is empty.",
+            }
+    except Exception as exc:
+        print(f"[WARN] Match analysis failed: {exc}")
+        match_summary = {
+            "total_rows": 0,
+            "under_match_count": 0,
+            "over_match_count": 0,
+            "csv_path": None,
+            "warning": f"Match analysis failed: {exc}",
+        }
+    
+    # Build plan exception summary from all analyzer CSV outputs
+    # Extract CSV paths from each analyzer summary
+    issue_csv_paths = {
+        "secure20": secure20_summary.get("csv_path"),
+        "eligibility": eligibility_summary.get("csv_path"),
+        "comp_402g": comp_402g_summary.get("csv_path"),
+        "match": match_summary.get("csv_path"),
+    }
+    
+    try:
+        plan_ex_summary, plan_ex_csv_path = build_plan_exception_summary(
+            output_dir=output_dir_path,
+            run_id=str(run_id),
+            plan_name=config.plan_name,
+            plan_year=inferred_plan_year,
+            issue_csv_paths=issue_csv_paths,
+        )
+        if plan_ex_csv_path is not None:
+            plan_ex_summary["csv_path"] = str(plan_ex_csv_path)
+    except Exception as exc:
+        print(f"[WARN] Plan exception summary failed: {exc}")
+        plan_ex_summary = {
+            "total_issues": 0,
+            "by_category": {},
+            "csv_path": None,
+            "warning": f"Plan exception summary failed: {exc}",
+        }
+    
     summary = {
         "plan_name": config.plan_name,
         "payroll_vendor": vendor_detection.get("payroll_vendor", "Unknown / Generic"),
@@ -572,6 +711,15 @@ def run_prooflink_engine(
     
     # Include eligibility drift analysis summary
     summary["eligibility_drift"] = eligibility_summary
+    
+    # Include 402(g) compensation limit analysis summary
+    summary["comp_402g"] = comp_402g_summary
+    
+    # Include employer match reasonableness analysis summary
+    summary["match_checks"] = match_summary
+    
+    # Include plan exception summary (aggregated from all analyzers)
+    summary["plan_exceptions"] = plan_ex_summary
     
     return EngineResult(
         run_id=run_id,
