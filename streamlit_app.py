@@ -959,6 +959,25 @@ def render_reconciliation_tab():
         col9 = st.columns(1)[0]
         col9.metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
         
+        # Plan Health
+        plan_health = summary_dict.get("plan_health") if isinstance(summary_dict, dict) else None
+        if plan_health:
+            st.divider()
+            st.subheader("Plan Health")
+            
+            cols = st.columns(3)
+            cols[0].metric("Health Score", f"{plan_health.get('score', 0)}")
+            cols[1].metric("Grade", plan_health.get("grade", "N/A"))
+            cols[2].metric("Risk Level", plan_health.get("risk_level", "N/A"))
+            
+            with st.expander("Plan health details", expanded=False):
+                st.write("Weighted violations:", plan_health.get("weighted_violations"))
+                st.write("Total participants:", plan_health.get("total_participants"))
+                by_cat = plan_health.get("by_category") or {}
+                if by_cat:
+                    st.write("Issues by category:")
+                    st.json(by_cat)
+        
         # Contribution Timing Analysis
         st.divider()
         st.markdown("### Contribution Timing Analysis")
@@ -1018,14 +1037,18 @@ def render_reconciliation_tab():
         st.divider()
         st.markdown("### Eligibility Drift Detection")
         
-        drift_count = summary_dict.get("eligibility_drift_count", 0)
-        drift_path = summary_dict.get("eligibility_drift")
+        drift_summary = summary_dict.get("eligibility_drift") or {}
+        if not isinstance(drift_summary, dict):
+            drift_summary = {}
+        
+        drift_count = drift_summary.get("eligibility_drift_count", 0)
+        drift_csv_path = drift_summary.get("csv_path")
         
         st.markdown(f"**Eligibility drift rows:** {drift_count}")
         
-        if drift_count > 0 and drift_path and os.path.exists(drift_path):
+        if drift_count > 0 and drift_csv_path and os.path.exists(drift_csv_path):
             run_id = summary_dict.get("run_id", "unknown")
-            with open(drift_path, "rb") as f:
+            with open(drift_csv_path, "rb") as f:
                 drift_data = f.read()
             st.download_button(
                 label="Download eligibility drift CSV",
@@ -1052,7 +1075,26 @@ def render_reconciliation_tab():
                         file_name=f"evidence_{run_id}.zip",
                         mime="application/zip",
                     )
-        else:
+        
+        # Plan Exception Summary download
+        plan_ex_summary = summary_dict.get("plan_exceptions") if isinstance(summary_dict, dict) else None
+        plan_ex_csv_path = None
+        if isinstance(plan_ex_summary, dict):
+            plan_ex_csv_path = plan_ex_summary.get("csv_path")
+        
+        if plan_ex_csv_path and os.path.exists(plan_ex_csv_path):
+            st.markdown("### Plan Exception Summary")
+            with open(plan_ex_csv_path, "rb") as f:
+                plan_ex_data = f.read()
+            st.download_button(
+                label="Download plan_exception_summary.csv",
+                data=plan_ex_data,
+                file_name="plan_exception_summary.csv",
+                mime="text/csv",
+                key="download_plan_exception_summary",
+            )
+        
+        if not run_id:
             st.info("Run an analysis first to generate an evidence pack.")
     else:
         st.info("Run an analysis to see results.")
