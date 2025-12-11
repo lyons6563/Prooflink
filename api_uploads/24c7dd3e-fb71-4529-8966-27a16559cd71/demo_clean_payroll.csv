@@ -1,0 +1,2 @@
+Employee_ID,Full_Name,Gross_Pay,HCE_Flag,Pay_Date,EE_PreTax_Def,EE_Roth_Def,Loan_Repayment
+1001,Alice Example,2500,N,2025-11-26,125,60,30

@@ -27,6 +27,10 @@ from contribution_timing_analyzer_v2 import run_timing_analysis
 
 from eligibility_drift import detect_eligibility_drift
 
+from secure20_catchup_analyzer import analyze_secure20_catchup
+
+from eligibility_drift_analyzer import analyze_eligibility_drift
+
 
 @dataclass
 class RunSummary:
@@ -394,10 +398,14 @@ def run_prooflink_engine(
     secure20_exceptions_csv = reconciliation_results.get("secure20_exceptions_csv")
     
     # Run contribution timing analysis directly to ensure it executes and we capture metrics
-    # Derive output directory from evidence_pack_path
+    # Derive output directory from evidence_pack_path to ensure all outputs go to the same directory
     # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
-    # output_dir should be: "api_uploads\\<run_id>\\output"
-    output_dir = os.path.dirname(evidence_pack_path) if evidence_pack_path else config.output_dir
+    # output_dir should be: "api_uploads\\<run_id>\\output" (same directory as reconciliation outputs)
+    if evidence_pack_path:
+        output_dir_path = Path(evidence_pack_path).parent
+    else:
+        output_dir_path = Path(config.output_dir)
+    output_dir = str(output_dir_path)  # Keep as string for timing analysis compatibility
     
     # Debug instrumentation for timing analysis
     timing_debug: Dict[str, Any] = {
@@ -410,8 +418,21 @@ def run_prooflink_engine(
         "output_dir": output_dir,
     }
     
-    real_timing_metrics: Dict[str, Any] = {}
-    timing_result = None
+    # Safe defaults for timing analysis results
+    real_timing_metrics: Dict[str, Any] = {
+        "total_rows": 0,
+        "late_rows": 0,
+        "missing_deposits": 0,
+        "timing_risk": "N/A",
+    }
+    timing_result: Dict[str, Any] = {
+        "late_contributions_path": "",
+        "timing_summary_path": "",
+        "total_rows": 0,
+        "late_rows": 0,
+        "missing_deposits": 0,
+        "timing_risk": "N/A",
+    }
     
     try:
         timing_debug["called"] = True
@@ -434,15 +455,24 @@ def run_prooflink_engine(
             }
         else:
             timing_debug["result_keys"] = None
+            # If result is not a dict, use defaults
+            timing_result = {
+                "late_contributions_path": "",
+                "timing_summary_path": "",
+                "total_rows": 0,
+                "late_rows": 0,
+                "missing_deposits": 0,
+                "timing_risk": "N/A",
+            }
             
     except Exception as exc:
         timing_debug["exception"] = repr(exc)
-        # Log the error but continue - we'll fall back to defaults or reconciliation_results
+        # Log the error but continue - timing analysis failure should not crash the engine
         logger.warning(f"Timing analysis failed in run_prooflink_engine: {exc}")
-        real_timing_metrics = {}
+        # timing_result and real_timing_metrics already have safe defaults set above
     
     # If timing analysis didn't produce results, try to get from reconciliation_results
-    if not real_timing_metrics:
+    if not real_timing_metrics or real_timing_metrics.get("total_rows", 0) == 0:
         timing_metrics_raw = reconciliation_results.get("timing_metrics")
         if isinstance(timing_metrics_raw, dict) and timing_metrics_raw:
             real_timing_metrics = timing_metrics_raw.copy()
@@ -452,14 +482,32 @@ def run_prooflink_engine(
             real_timing_metrics.setdefault("missing_deposits", 0)
             real_timing_metrics.setdefault("timing_risk", "N/A")
     
-    # Final fallback if nothing was loaded
-    if not real_timing_metrics:
-        real_timing_metrics = {
-            "total_rows": 0,
-            "late_rows": 0,
-            "missing_deposits": 0,
-            "timing_risk": "N/A",
-        }
+    # Run Secure 2.0 catch-up analysis
+    # Use the fully processed payroll dataframe from reconciliation (includes all derived columns)
+    # Fall back to lightly-normalized version if processed df is not available
+    processed_payroll_df = reconciliation_results.get("payroll_processed_df")
+    if processed_payroll_df is None:
+        # Fallback: load and normalize if processed df is missing
+        payroll_df = pd.read_csv(payroll_csv)
+        payroll_df = normalize_column_names(payroll_df)
+        processed_payroll_df = payroll_df
+    
+    # Ensure output_dir_path exists (same directory as reconciliation, timing, and evidence pack)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    # Call Secure 2.0 catch-up analyzer - writes secure20_violations.csv to the same output directory
+    # Uses fully processed payroll dataframe with derived columns (is_hce, catchup_pretax, catchup_roth, etc.)
+    secure20_summary = analyze_secure20_catchup(
+        payroll_df=processed_payroll_df,
+        output_dir=output_dir_path,
+    )
+    
+    # Run eligibility drift analysis
+    # Uses the same fully processed payroll dataframe from reconciliation
+    eligibility_summary = analyze_eligibility_drift(
+        payroll_df=processed_payroll_df,
+        output_dir=output_dir_path,
+    )
     
     summary = {
         "plan_name": config.plan_name,
@@ -474,7 +522,7 @@ def run_prooflink_engine(
         "deferral_mismatch_count": int(mismatches.get("deferral_count", 0)),
         "loan_mismatch_count": int(mismatches.get("loan_count", 0)),
         "late_deferral_count": int(timing.get("late_deferral_count", 0)),
-        "eligibility_drift_count": int(reconciliation_results.get("eligibility_drift_count", 0)),
+        "eligibility_drift_count": int(eligibility_summary.get("eligibility_drift_count", reconciliation_results.get("eligibility_drift_count", 0))),
         "evidence_pack_path": evidence_pack_path,
         "run_id": run_id,
     }
@@ -483,9 +531,16 @@ def run_prooflink_engine(
     summary["timing_metrics"] = real_timing_metrics
     summary["timing_debug"] = timing_debug
     
-    # Include timing dict if it has additional fields beyond late_deferral_count
+    # Always include timing dict (even if empty, to ensure consistent summary structure)
+    # Use timing from reconciliation_results if available, otherwise use empty dict with defaults
     if timing:
         summary["timing"] = timing
+    else:
+        # Provide default timing structure when timing analysis fails or is unavailable
+        summary["timing"] = {
+            "late_deferral_count": 0,
+            "late_loan_count": 0,
+        }
     
     # Include timing file paths if available (prefer from direct call, fallback to reconciliation_results)
     late_contributions_path = ""
@@ -506,11 +561,17 @@ def run_prooflink_engine(
     summary["secure20_exceptions"] = secure20_exceptions
     summary["secure20_exception_count"] = secure20_exception_count
     
+    # Include Secure 2.0 catch-up analysis summary
+    summary["secure20"] = secure20_summary
+    
     # Include Secure 2.0 file paths if available
     if secure20_exceptions_csv:
         summary["secure20_files"] = {
             "exceptions_csv": secure20_exceptions_csv,
         }
+    
+    # Include eligibility drift analysis summary
+    summary["eligibility_drift"] = eligibility_summary
     
     return EngineResult(
         run_id=run_id,
@@ -563,6 +624,13 @@ def run_reconciliation(
       - generate a new proof_manifest_*.json in proofs_dir
       - build an evidence_pack.zip bundle
       - return a dict of paths for the UI
+
+    Returns:
+        dict containing:
+        - File paths (reconciliation_report, deferral_mismatches, loan_mismatches, etc.)
+        - Metrics (totals, mismatches, timing, vendor_detection, etc.)
+        - payroll_processed_df: pd.DataFrame with fully processed payroll data including
+          derived columns (deferral_amount, loan_amount, is_hce, catchup_pretax, catchup_roth, etc.)
     """
 
     # Resolve and prepare directories
@@ -1056,6 +1124,10 @@ def run_reconciliation(
             print(f"  {k}: {v}")
         else:
             print(f"  {k}: {v}")
+
+    # Add the fully processed payroll dataframe to results
+    # This includes all derived columns (deferral_amount, loan_amount, is_hce, catchup_pretax, catchup_roth, etc.)
+    results["payroll_processed_df"] = p
 
     return results
    

@@ -1,0 +1,53 @@
+{
+  "run_timestamp_utc": "2025-12-10T20:16:56+00:00",
+  "payroll_file": "api_uploads\\08100052-29b3-4eb5-b3b5-59113f0ae848\\messy_payroll.csv",
+  "recordkeeper_file": "api_uploads\\08100052-29b3-4eb5-b3b5-59113f0ae848\\messy_rk.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "api_uploads\\08100052-29b3-4eb5-b3b5-59113f0ae848\\output\\deferral_mismatches.csv",
+      "sha256": "400101d9aaf691821b4ef372e0063ea1483dee9401ecd9dfd5337017fa37ad9f",
+      "row_count": 6,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "delta",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "65bb0d3fda48291862142c1b6c835e1198f69f28240b11d606e84a7af29ff3e9",
+      "row_hash_sample": [
+        "08a3e649c4d9e8545c03a2aa36db24c3db641a7280476a6f6f0f66ad8dca939b",
+        "959f82bd6cb3fda7a52d2191bbb6e5072496dc7fe4c3819858e740a65e00ce06",
+        "659cc21d706aa0f2b18b8b29fee9251716cf189018a46d0af3410be9acc17027",
+        "c4df88d7f4cda215b032d10e461c2cc5f108d65d5e80936361161f7bee7c675b",
+        "135200fcf26c75a418b0b90f0871022cc35e5741c668689eb4034b501c9f8503"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "api_uploads\\08100052-29b3-4eb5-b3b5-59113f0ae848\\output\\loan_mismatches.csv",
+      "sha256": "b22cf337a944de2211a313b759dda8b005822013dbe465fd78f839dd5f66d3f2",
+      "row_count": 0,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "",
+      "row_hash_sample": []
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "api_uploads\\08100052-29b3-4eb5-b3b5-59113f0ae848\\output\\reconciliation_report.xlsx",
+      "sha256": "5ad8b668c775b791a0e4e218f5bccf46618d4a53759a01090cce47c4461a682d"
+    }
+  }
+}
