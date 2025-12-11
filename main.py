@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 
 from datetime import datetime
 import hashlib
@@ -337,12 +337,103 @@ def _infer_plan_year_from_payroll(payroll_df: pd.DataFrame) -> Optional[int]:
     return int(dates.dt.year.max())
 
 
+def _compute_weighted_violations(by_category: Dict[str, int]) -> int:
+    """
+    Compute a single weighted violation count based on issue counts by category.
+    Weights (initial heuristic):
+      - Secure 2.0:   3
+      - Eligibility:  2
+      - Comp/402(g):  3
+      - Match:        2
+      - Timing:       1
+      - Other:        1
+    """
+    weights = {
+        "Secure 2.0": 3,
+        "Eligibility": 2,
+        "Comp/402(g)": 3,
+        "Match": 2,
+        "Timing": 1,
+        "Other": 1,
+    }
+    total = 0
+    if not by_category:
+        return 0
+    for cat, count in by_category.items():
+        w = weights.get(cat, weights["Other"])
+        try:
+            c_int = int(count)
+        except Exception:
+            c_int = 0
+        total += c_int * w
+    return total
+
+
+def _grade_from_score(score: float) -> str:
+    """
+    Convert a 0-100 score into a plan health letter grade.
+    """
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+
+
+def _risk_level_from_score(score: float) -> str:
+    """
+    Map a score to a simple risk level label.
+    """
+    if score >= 85:
+        return "Low"
+    if score >= 70:
+        return "Moderate"
+    return "High"
+
+
+def _inject_run_metadata_into_csv(
+    csv_path: Optional[Union[str, Path]],
+    run_id: str,
+    plan_name: Optional[str],
+    plan_year: Optional[int],
+) -> None:
+    """
+    Add run/plan metadata columns to a CSV if it exists.
+
+    Columns added:
+      - run_id
+      - plan_name
+      - plan_year
+
+    If the file does not exist or cannot be read, this function prints a warning and returns.
+    """
+    if not csv_path:
+        return
+    try:
+        path = Path(csv_path)
+        if not path.exists():
+            print(f"[WARN] _inject_run_metadata_into_csv: CSV not found at {path}")
+            return
+        df = pd.read_csv(path)
+        df["run_id"] = run_id
+        df["plan_name"] = plan_name
+        df["plan_year"] = plan_year
+        df.to_csv(path, index=False)
+    except Exception as exc:
+        print(f"[WARN] _inject_run_metadata_into_csv failed for {csv_path}: {exc}")
+
+
 def run_prooflink_engine(
     payroll_path: str,
     rk_path: str,
     config: EngineConfig,
     *,
     run_id: Optional[str] = None,
+    plan_rules: Optional[Dict[str, Any]] = None,
 ) -> EngineResult:
     """
     Core ProofLink engine entrypoint.
@@ -530,10 +621,36 @@ def run_prooflink_engine(
     
     # Run eligibility drift analysis
     # Uses the same fully processed payroll dataframe from reconciliation
-    eligibility_summary = analyze_eligibility_drift(
-        payroll_df=processed_payroll_df,
-        output_dir=output_dir_path,
-    )
+    eligibility_summary = {
+        "total_rows": 0,
+        "eligibility_drift_count": 0,
+        "csv_path": None,
+    }
+    try:
+        if processed_payroll_df is not None and not processed_payroll_df.empty:
+            eligibility_summary, eligibility_csv_path = analyze_eligibility_drift(
+                payroll_df=processed_payroll_df,
+                output_dir=output_dir_path,
+                plan_rules=plan_rules,
+            )
+            # Normalize csv_path into the summary if needed
+            if eligibility_csv_path is not None:
+                eligibility_summary["csv_path"] = str(eligibility_csv_path)
+        else:
+            eligibility_summary = {
+                "total_rows": 0,
+                "eligibility_drift_count": 0,
+                "csv_path": None,
+                "warning": "Eligibility drift analysis skipped because processed payroll data is empty.",
+            }
+    except Exception as exc:
+        print(f"[WARN] Eligibility drift analysis failed: {exc}")
+        eligibility_summary = {
+            "total_rows": 0,
+            "eligibility_drift_count": 0,
+            "csv_path": None,
+            "warning": f"Eligibility drift analysis failed: {exc}",
+        }
     
     # Run 402(g) compensation limit analysis
     # Initialize default summary
@@ -720,6 +837,209 @@ def run_prooflink_engine(
     
     # Include plan exception summary (aggregated from all analyzers)
     summary["plan_exceptions"] = plan_ex_summary
+    
+    # Compute plan health score based on issue counts and participant count
+    # Extract by_category
+    by_category = plan_ex_summary.get("by_category", {})
+    
+    # Compute weighted violations
+    weighted_violations = _compute_weighted_violations(by_category)
+    
+    # Determine total_participants
+    total_participants = 0
+    try:
+        tp = comp_402g_summary.get("total_participants")
+        if isinstance(tp, int) and tp > 0:
+            total_participants = tp
+    except Exception:
+        pass
+    
+    if total_participants <= 0 and processed_payroll_df is not None and not processed_payroll_df.empty:
+        if "employee_id" in processed_payroll_df.columns:
+            total_participants = processed_payroll_df["employee_id"].nunique()
+    
+    if total_participants <= 0:
+        total_participants = 1
+    
+    # Compute numeric score
+    try:
+        score = 100.0 - (float(weighted_violations) / float(total_participants) * 100.0)
+    except Exception:
+        score = 100.0
+    
+    if score < 0.0:
+        score = 0.0
+    if score > 100.0:
+        score = 100.0
+    
+    # Derive grade and risk
+    grade = _grade_from_score(score)
+    risk_level = _risk_level_from_score(score)
+    
+    # Build plan_health dict
+    plan_health = {
+        "score": round(score, 1),
+        "grade": grade,
+        "risk_level": risk_level,
+        "weighted_violations": int(weighted_violations),
+        "total_participants": int(total_participants),
+        "by_category": by_category,
+    }
+    
+    # Add plan health to summary
+    summary["plan_health"] = plan_health
+    
+    # Inject run metadata into all issue CSVs
+    issue_csv_paths = {
+        "secure20": secure20_summary.get("csv_path"),
+        "eligibility": eligibility_summary.get("csv_path"),
+        "comp_402g": comp_402g_summary.get("csv_path"),
+        "match": match_summary.get("csv_path"),
+        "plan_exceptions": plan_ex_summary.get("csv_path"),
+    }
+    
+    for _key, _csv_path in issue_csv_paths.items():
+        _inject_run_metadata_into_csv(
+            csv_path=_csv_path,
+            run_id=str(run_id),
+            plan_name=config.plan_name,
+            plan_year=inferred_plan_year,
+        )
+    
+    # Build evidence index listing all key artifacts produced during this run
+    evidence_index = []
+    
+    # Analyzer CSV outputs
+    if secure20_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "secure20_violations",
+            "name": "Secure 2.0 catch-up violations",
+            "category": "Secure 2.0",
+            "path": secure20_summary["csv_path"],
+        })
+    
+    if eligibility_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "eligibility_drift",
+            "name": "Eligibility drift issues",
+            "category": "Eligibility",
+            "path": eligibility_summary["csv_path"],
+        })
+    
+    if comp_402g_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "comp_402g_violations",
+            "name": "402(g) excess deferral violations",
+            "category": "Comp/402(g)",
+            "path": comp_402g_summary["csv_path"],
+        })
+    
+    if match_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "match_issues",
+            "name": "Employer match reasonableness issues",
+            "category": "Match",
+            "path": match_summary["csv_path"],
+        })
+    
+    if plan_ex_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "plan_exception_summary",
+            "name": "Unified plan exception summary",
+            "category": "Summary",
+            "path": plan_ex_summary["csv_path"],
+        })
+    
+    # Reconciliation artifacts
+    recon_report_path = output_dir_path / "reconciliation_report.xlsx"
+    if recon_report_path.exists():
+        evidence_index.append({
+            "key": "reconciliation_report",
+            "name": "Reconciliation report (deferrals and loans)",
+            "category": "Reconciliation",
+            "path": str(recon_report_path),
+        })
+    
+    # Get reconciliation file paths from reconciliation_results if available
+    deferral_mismatches_path = reconciliation_results.get("deferral_mismatches")
+    if deferral_mismatches_path and Path(deferral_mismatches_path).exists():
+        evidence_index.append({
+            "key": "deferral_mismatches",
+            "name": "Deferral mismatches between payroll and recordkeeper",
+            "category": "Reconciliation",
+            "path": str(deferral_mismatches_path),
+        })
+    
+    only_payroll_path = reconciliation_results.get("only_in_payroll")
+    if only_payroll_path and Path(only_payroll_path).exists():
+        evidence_index.append({
+            "key": "only_in_payroll_deferrals",
+            "name": "Deferrals only in payroll",
+            "category": "Reconciliation",
+            "path": str(only_payroll_path),
+        })
+    
+    only_rk_path = reconciliation_results.get("only_in_recordkeeper")
+    if only_rk_path and Path(only_rk_path).exists():
+        evidence_index.append({
+            "key": "only_in_recordkeeper_deferrals",
+            "name": "Deferrals only in recordkeeper file",
+            "category": "Reconciliation",
+            "path": str(only_rk_path),
+        })
+    
+    # Timing artifacts
+    if timing_result and isinstance(timing_result, dict):
+        late_contributions_path = timing_result.get("late_contributions_path")
+        if late_contributions_path and Path(late_contributions_path).exists():
+            evidence_index.append({
+                "key": "late_contributions",
+                "name": "Late contribution detail",
+                "category": "Timing",
+                "path": str(late_contributions_path),
+            })
+        
+        timing_summary_path = timing_result.get("timing_summary_path")
+        if timing_summary_path and Path(timing_summary_path).exists():
+            evidence_index.append({
+                "key": "timing_summary",
+                "name": "Timing risk summary",
+                "category": "Timing",
+                "path": str(timing_summary_path),
+            })
+    
+    # Fallback: check output_dir for timing files if not in timing_result
+    if not any(item.get("key") == "late_contributions" for item in evidence_index):
+        late_contributions_path = output_dir_path / "late_contributions.csv"
+        if late_contributions_path.exists():
+            evidence_index.append({
+                "key": "late_contributions",
+                "name": "Late contribution detail",
+                "category": "Timing",
+                "path": str(late_contributions_path),
+            })
+    
+    if not any(item.get("key") == "timing_summary" for item in evidence_index):
+        timing_summary_path = output_dir_path / "timing_summary.json"
+        if timing_summary_path.exists():
+            evidence_index.append({
+                "key": "timing_summary",
+                "name": "Timing risk summary",
+                "category": "Timing",
+                "path": str(timing_summary_path),
+            })
+    
+    # Evidence pack ZIP
+    if evidence_pack_path and Path(evidence_pack_path).exists():
+        evidence_index.append({
+            "key": "evidence_pack_zip",
+            "name": "ProofLink evidence pack (ZIP)",
+            "category": "Bundle",
+            "path": str(evidence_pack_path),
+        })
+    
+    # Add evidence_index to summary
+    summary["evidence_index"] = evidence_index
     
     return EngineResult(
         run_id=run_id,

@@ -95,6 +95,43 @@ def main():
             print("WARNING: No Secure 2.0 summary found in results")
             print("Full summary keys:", list(result.summary.keys()))
         
+        # Plan Health
+        plan_health = result.summary.get("plan_health")
+        if plan_health is not None:
+            print()
+            print("=" * 70)
+            print("Plan Health")
+            print("=" * 70)
+            print(json.dumps(plan_health, indent=2))
+        else:
+            print()
+            print("[INFO] plan_health not present in engine_result.")
+        
+        # Plan Exceptions
+        plan_exceptions = result.summary.get("plan_exceptions")
+        if plan_exceptions is not None:
+            print()
+            print("=" * 70)
+            print("Plan Exceptions Summary")
+            print("=" * 70)
+            print(json.dumps(plan_exceptions, indent=2))
+        else:
+            print()
+            print("[INFO] plan_exceptions not present in engine_result.")
+        
+        # Evidence Index
+        evidence_index = result.summary.get("evidence_index") or []
+        if evidence_index:
+            print()
+            print("=" * 70)
+            print("Evidence Index (first 10 entries)")
+            print("=" * 70)
+            for item in evidence_index[:10]:
+                print(f"- [{item.get('category', 'Unknown')}] {item.get('name')} -> {item.get('path')}")
+        else:
+            print()
+            print("[INFO] evidence_index is empty or not present.")
+        
         print("\n" + "=" * 70)
         print("Test completed successfully!")
         print("=" * 70)

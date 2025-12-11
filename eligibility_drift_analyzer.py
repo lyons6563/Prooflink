@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import date, timedelta
 
 import pandas as pd
@@ -63,10 +63,89 @@ def _safe_str(value: Any, default: str = "") -> str:
         return default
 
 
+def _align_first_of_month(dt: Optional[pd.Timestamp]) -> Optional[pd.Timestamp]:
+    """Align a date to the first of the following month."""
+    if dt is None or pd.isna(dt):
+        return None
+    # If already first of month, keep it
+    if dt.day == 1:
+        return dt.normalize()
+    year = dt.year
+    month = dt.month + 1
+    if month > 12:
+        month = 1
+        year += 1
+    return pd.Timestamp(year=year, month=month, day=1)
+
+
+def _compute_eligibility_date_for_row(row: pd.Series, plan_rules: Optional[Dict[str, Any]]) -> Optional[pd.Timestamp]:
+    """
+    Compute eligibility date for a single row based on plan_rules.
+    
+    Args:
+        row: pandas Series with hire_date, dob columns (may be None/NaT)
+        plan_rules: dict with eligibility_rule, service_days_required, age_required, align_first_month
+        
+    Returns:
+        pd.Timestamp for eligibility date, or None if cannot be computed
+    """
+    rules = plan_rules or {}
+    rule_type = rules.get("eligibility_rule", "age21_and_1year")
+
+    hire_ts = pd.to_datetime(row.get("hire_date"), errors="coerce")
+    dob_ts = pd.to_datetime(row.get("dob"), errors="coerce")
+
+    service_days_required = rules.get("service_days_required")
+    age_required = rules.get("age_required")
+    align_first_month = bool(rules.get("align_first_month", False))
+
+    elig_dt = None
+
+    if rule_type == "immediate":
+        elig_dt = hire_ts
+
+    elif rule_type == "age21_and_1year":
+        service_days = service_days_required if isinstance(service_days_required, int) and service_days_required > 0 else 365
+        age_req = age_required if isinstance(age_required, int) and age_required > 0 else 21
+        service_dt = hire_ts + pd.Timedelta(days=service_days) if hire_ts is not None and not pd.isna(hire_ts) else None
+        age_dt = dob_ts + pd.DateOffset(years=age_req) if dob_ts is not None and not pd.isna(dob_ts) else None
+        candidates = [d for d in [service_dt, age_dt] if d is not None]
+        elig_dt = max(candidates) if candidates else None
+
+    elif rule_type == "service_only":
+        service_days = service_days_required if isinstance(service_days_required, int) and service_days_required > 0 else 0
+        elig_dt = hire_ts + pd.Timedelta(days=service_days) if hire_ts is not None and not pd.isna(hire_ts) else None
+
+    elif rule_type == "age_only":
+        age_req = age_required if isinstance(age_required, int) and age_required > 0 else 21
+        elig_dt = dob_ts + pd.DateOffset(years=age_req) if dob_ts is not None and not pd.isna(dob_ts) else None
+
+    else:
+        # fallback to original
+        service_dt = hire_ts + pd.Timedelta(days=365) if hire_ts is not None and not pd.isna(hire_ts) else None
+        age_dt = dob_ts + pd.DateOffset(years=21) if dob_ts is not None and not pd.isna(dob_ts) else None
+        candidates = [d for d in [service_dt, age_dt] if d is not None]
+        elig_dt = max(candidates) if candidates else None
+
+    if elig_dt is not None and not pd.isna(elig_dt) and align_first_month:
+        elig_dt = _align_first_of_month(elig_dt)
+
+    return elig_dt
+
+
+def _compute_age_at_eligibility(dob_ts: Optional[pd.Timestamp], elig_ts: Optional[pd.Timestamp]) -> Optional[float]:
+    """Compute age at eligibility date given date of birth and eligibility date."""
+    if dob_ts is None or pd.isna(dob_ts) or elig_ts is None or pd.isna(elig_ts):
+        return None
+    delta_days = (elig_ts - dob_ts).days
+    return round(delta_days / 365.25, 1)
+
+
 def analyze_eligibility_drift(
     payroll_df: pd.DataFrame,
     output_dir: Path,
-) -> Dict[str, Any]:
+    plan_rules: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], Optional[Path]]:
     """
     Analyze eligibility drift issues and write a CSV of drift records.
 
@@ -80,12 +159,19 @@ def analyze_eligibility_drift(
             - "EE Deferral $": regular pre-tax deferrals
             - "EE Roth $": regular Roth deferrals
         output_dir: directory where CSV outputs should be written.
+        plan_rules: Optional dict with eligibility rules configuration:
+            - eligibility_rule: "immediate", "age21_and_1year", "service_only", "age_only"
+            - service_days_required: int (for service_only or age21_and_1year)
+            - age_required: int (for age_only or age21_and_1year)
+            - align_first_month: bool (align eligibility to first of following month)
 
     Returns:
-        summary dict with:
-        - total_rows: total number of rows in payroll_df
-        - eligibility_drift_count: number of drift records found
-        - csv_path: string path to the drift records CSV
+        Tuple of (summary dict, csv_path):
+        - summary dict with:
+            - total_rows: total number of rows in payroll_df
+            - eligibility_drift_count: number of drift records found
+            - csv_path: string path to the drift records CSV
+        - csv_path: Path to the CSV file (or None if no records)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -102,21 +188,31 @@ def analyze_eligibility_drift(
             "total_rows": 0,
             "eligibility_drift_count": 0,
             "csv_path": str(csv_path),
-        }
+        }, csv_path
     
     # Configurable grace period (hard-coded for now)
     grace_days = 30
     
     drift_records: list[EligibilityDriftRecord] = []
     
+    # Work on a copy and parse date columns early
+    df = payroll_df.copy()
+    
+    if "hire_date" in df.columns:
+        df["hire_date"] = pd.to_datetime(df["hire_date"], errors="coerce")
+    if "dob" in df.columns:
+        df["dob"] = pd.to_datetime(df["dob"], errors="coerce")
+    if "pay_date" in df.columns:
+        df["pay_date"] = pd.to_datetime(df["pay_date"], errors="coerce")
+    
     # Safely extract required columns with defaults
     # Employee ID: use "employee_id" (mapped column from processed dataframe)
-    if "employee_id" not in payroll_df.columns:
+    if "employee_id" not in df.columns:
         # No employee_id column - cannot process
         drift_records = []
     else:
         # Group by employee to process each employee's records
-        employee_groups = payroll_df.groupby("employee_id")
+        employee_groups = df.groupby("employee_id")
         
         for employee_id, emp_df in employee_groups:
             employee_id_str = _safe_str(employee_id, "")
@@ -128,49 +224,39 @@ def analyze_eligibility_drift(
             if "hire_date" in emp_df.columns:
                 hire_date_series = emp_df["hire_date"].dropna()
                 if not hire_date_series.empty:
-                    hire_date = _safe_date(hire_date_series.iloc[0])
+                    hire_date_val = hire_date_series.iloc[0]
+                    hire_date = _safe_date(hire_date_val)
             
             dob = None
             if "dob" in emp_df.columns:
                 dob_series = emp_df["dob"].dropna()
                 if not dob_series.empty:
-                    dob = _safe_date(dob_series.iloc[0])
+                    dob_val = dob_series.iloc[0]
+                    dob = _safe_date(dob_val)
             
             # Skip if neither hire_date nor dob exists
             if hire_date is None and dob is None:
                 continue
             
-            # Compute eligibility date
-            computed_eligibility_date = None
-            hire_eligibility_date = None
-            age21_eligibility_date = None
+            # Build a representative row for eligibility computation
+            # Use the first row of the employee group
+            representative_row = emp_df.iloc[0].copy()
+            representative_row["hire_date"] = pd.to_datetime(hire_date, errors="coerce") if hire_date else None
+            representative_row["dob"] = pd.to_datetime(dob, errors="coerce") if dob else None
             
-            if hire_date:
-                # hire_date + 1 year (365 days)
-                hire_eligibility_date = hire_date + timedelta(days=365)
+            # Compute eligibility date using plan_rules
+            computed_eligibility_ts = _compute_eligibility_date_for_row(representative_row, plan_rules)
             
-            if dob:
-                # dob + 21 years
-                age21_eligibility_date = date(dob.year + 21, dob.month, dob.day)
-            
-            # Final eligibility date = max(hire_date+1Y, age-21 date) when both exist
-            if hire_eligibility_date and age21_eligibility_date:
-                computed_eligibility_date = max(hire_eligibility_date, age21_eligibility_date)
-            elif hire_eligibility_date:
-                computed_eligibility_date = hire_eligibility_date
-            elif age21_eligibility_date:
-                computed_eligibility_date = age21_eligibility_date
-            
-            if computed_eligibility_date is None:
+            if computed_eligibility_ts is None or pd.isna(computed_eligibility_ts):
                 continue
             
+            # Convert to date for compatibility with existing logic
+            computed_eligibility_date = computed_eligibility_ts.date()
+            
             # Compute age at eligibility if dob exists
-            age_at_eligibility = None
-            if dob and computed_eligibility_date:
-                try:
-                    age_at_eligibility = (computed_eligibility_date - dob).days // 365
-                except Exception:
-                    age_at_eligibility = None
+            dob_ts = pd.to_datetime(dob, errors="coerce") if dob else None
+            age_at_eligibility_val = _compute_age_at_eligibility(dob_ts, computed_eligibility_ts)
+            age_at_eligibility = int(age_at_eligibility_val) if age_at_eligibility_val is not None else None
             
             # Compute first contribution date per employee
             # Look for rows where ("EE Deferral $" + "EE Roth $") > 0
@@ -261,5 +347,5 @@ def analyze_eligibility_drift(
         "csv_path": str(csv_path),
     }
     
-    return summary
+    return summary, csv_path
 

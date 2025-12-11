@@ -26,6 +26,7 @@ def api_create_run(
     rk_bytes: bytes,
     rk_filename: str,
     plan_name: str,
+    plan_rules: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Call the ProofLink backend API to create a run.
@@ -41,6 +42,11 @@ def api_create_run(
         "rk_file": (rk_filename, rk_bytes, "text/csv"),
     }
     data = {"plan_name": plan_name or "Untitled Plan"}
+    
+    # Add plan_rules to data if provided
+    if plan_rules:
+        # Convert plan_rules dict to JSON string for form data
+        data["plan_rules"] = json.dumps(plan_rules)
 
     resp = requests.post(f"{API_BASE_URL}/api/v1/runs", files=files, data=data, timeout=60)
     resp.raise_for_status()
@@ -702,6 +708,7 @@ def render_batch_reconciliation_tab():
                     rk_bytes=rk_file.getvalue(),
                     rk_filename=rk_file.name,
                     plan_name=plan_name,
+                    plan_rules=None,  # Batch runs don't have eligibility rules UI yet
                 )
                 
                 summary_dict = api_result.get("summary", {})
@@ -790,6 +797,14 @@ def render_reconciliation_tab():
 
     st.markdown("---")
 
+    # Initialize plan_rules with defaults
+    plan_rules = {
+        "eligibility_rule": "immediate",
+        "service_days_required": None,
+        "age_required": None,
+        "align_first_month": False,
+    }
+
     # ---------- Vendor Hints ----------
     with st.expander("Advanced Options: Vendor Hints"):
         payroll_vendor_hint = st.selectbox(
@@ -809,6 +824,45 @@ def render_reconciliation_tab():
         rk_vendor_hint = (
             None if rk_vendor_hint == "Auto-detect" else rk_vendor_hint
         )
+        
+        # Eligibility Rules
+        st.markdown("### Eligibility Rules")
+        rule_type = st.selectbox(
+            "Eligibility rule",
+            ["immediate", "age21_and_1year", "service_only", "age_only"],
+            index=0,
+        )
+        
+        service_days = None
+        age_required = None
+        
+        if rule_type == "service_only":
+            service_days = st.number_input(
+                "Service requirement (days)",
+                min_value=0,
+                max_value=1095,
+                value=0,
+            )
+        
+        if rule_type == "age_only":
+            age_required = st.number_input(
+                "Age requirement",
+                min_value=18,
+                max_value=75,
+                value=21,
+            )
+        
+        align_first_month = st.checkbox(
+            "Align eligibility to first of month",
+            value=False,
+        )
+        
+        plan_rules = {
+            "eligibility_rule": rule_type,
+            "service_days_required": service_days,
+            "age_required": age_required,
+            "align_first_month": align_first_month,
+        }
 
     run_button = st.button(
         "▶️ Run Reconciliation", type="primary", use_container_width=True
@@ -828,6 +882,7 @@ def render_reconciliation_tab():
                     rk_bytes=rk_file.getvalue(),
                     rk_filename=rk_file.name,
                     plan_name=plan_name,
+                    plan_rules=plan_rules,
                 )
 
             run_id = api_result.get("run_id")

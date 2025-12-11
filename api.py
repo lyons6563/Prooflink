@@ -9,8 +9,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from uuid import uuid4
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+import json
 import jwt
 from jwt import PyJWTError
 from pydantic import BaseModel, EmailStr
@@ -111,6 +112,7 @@ async def create_run(
     payroll_file: UploadFile = File(...),
     rk_file: UploadFile = File(...),
     plan_name: str = Form("Untitled Plan"),
+    plan_rules: Optional[str] = Form(None),
 ):
     """
     Create a new reconciliation run.
@@ -118,6 +120,10 @@ async def create_run(
     Accepts two CSV files (payroll and recordkeeper) and runs the full
     ProofLink pipeline: reconciliation, timing analysis, Secure 2.0 checks,
     and evidence pack generation.
+    
+    Args:
+        plan_rules: Optional JSON string containing eligibility rules configuration.
+            Expected format: {"eligibility_rule": "...", "service_days_required": ..., etc.}
     
     Returns:
         JSON with run_id, summary, and evidence_pack_available flag
@@ -141,6 +147,17 @@ async def create_run(
             content = await rk_file.read()
             f.write(content)
         
+        # Parse plan_rules if provided
+        plan_rules_dict: Optional[Dict[str, Any]] = None
+        if plan_rules:
+            try:
+                plan_rules_dict = json.loads(plan_rules)
+                if not isinstance(plan_rules_dict, dict):
+                    plan_rules_dict = None
+            except (json.JSONDecodeError, TypeError):
+                # Invalid JSON, use None (default behavior)
+                plan_rules_dict = None
+        
         # Create engine config
         config = EngineConfig(
             plan_name=plan_name,
@@ -154,6 +171,7 @@ async def create_run(
             rk_path=str(rk_path),
             config=config,
             run_id=run_id,
+            plan_rules=plan_rules_dict,
         )
         
         # Persist run in DB
