@@ -12,9 +12,14 @@ from datetime import datetime
 import json
 import requests
 import os
+import uuid
+
+# Import engine for direct mode
+from main import run_prooflink_engine, EngineConfig, EngineResult
 
 # API client configuration
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.getenv("PROOFLINK_API_URL")
+USE_API_BACKEND = bool(API_BASE_URL)
 
 # Simple local dev password (no secrets/env vars needed)
 APP_DEV_PASSWORD = "prooflink"
@@ -53,15 +58,110 @@ def api_create_run(
     return resp.json()
 
 
+def create_run(
+    payroll_bytes: bytes,
+    payroll_filename: str,
+    rk_bytes: bytes,
+    rk_filename: str,
+    plan_name: str,
+    plan_rules: Optional[Dict[str, Any]] = None,
+    payroll_vendor_hint: Optional[str] = None,
+    rk_vendor_hint: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Create a reconciliation run either via API or directly.
+    
+    Returns a dict with:
+    - run_id (str)
+    - summary (dict)
+    - status (str)
+    - evidence_pack_available (bool)
+    """
+    if USE_API_BACKEND:
+        # Use API backend
+        return api_create_run(
+            payroll_bytes=payroll_bytes,
+            payroll_filename=payroll_filename,
+            rk_bytes=rk_bytes,
+            rk_filename=rk_filename,
+            plan_name=plan_name,
+            plan_rules=plan_rules,
+        )
+    else:
+        # Run engine directly
+        run_id = str(uuid.uuid4())
+        run_dir = Path("streamlit_runs") / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save uploaded files
+        payroll_path = run_dir / (payroll_filename or "payroll.csv")
+        rk_path = run_dir / (rk_filename or "rk.csv")
+        
+        with open(payroll_path, "wb") as f:
+            f.write(payroll_bytes)
+        with open(rk_path, "wb") as f:
+            f.write(rk_bytes)
+        
+        # Create engine config
+        config = EngineConfig(
+            plan_name=plan_name or "Untitled Plan",
+            payroll_vendor_hint=payroll_vendor_hint,
+            rk_vendor_hint=rk_vendor_hint,
+            output_dir=str(run_dir / "output"),
+            proofs_dir=str(run_dir / "proofs"),
+        )
+        
+        # Run the engine
+        engine_result: EngineResult = run_prooflink_engine(
+            payroll_path=str(payroll_path),
+            rk_path=str(rk_path),
+            config=config,
+            run_id=run_id,
+            plan_rules=plan_rules,
+        )
+        
+        # Store in session state for later retrieval
+        st.session_state["current_manifest"] = engine_result.manifest
+        
+        # Convert EngineResult to API-compatible format
+        return {
+            "run_id": engine_result.run_id,
+            "summary": engine_result.summary,
+            "status": "completed",
+            "evidence_pack_available": bool(engine_result.evidence_pack_path and Path(engine_result.evidence_pack_path).exists()),
+        }
+
+
 def api_get_run(run_id: str) -> Dict[str, Any]:
     """Get run details from the API."""
+    if not USE_API_BACKEND:
+        # In direct mode, return from session state if available
+        if "current_run_id" in st.session_state and st.session_state["current_run_id"] == run_id:
+            summary = st.session_state.get("current_summary", {})
+            return {
+                "run_id": run_id,
+                "summary": summary,
+                "manifest": st.session_state.get("current_manifest", {}),
+            }
+        # Otherwise return empty (run history not supported in direct mode)
+        return {"run_id": run_id, "summary": {}, "manifest": {}}
+    
     resp = requests.get(f"{API_BASE_URL}/api/v1/runs/{run_id}", timeout=30)
     resp.raise_for_status()
     return resp.json()
 
 
 def api_download_evidence_pack(run_id: str) -> Optional[bytes]:
-    """Download evidence pack ZIP from the API."""
+    """Download evidence pack ZIP from the API or filesystem."""
+    if not USE_API_BACKEND:
+        # In direct mode, read from filesystem
+        run_dir = Path("streamlit_runs") / run_id
+        evidence_pack_path = run_dir / "output" / "prooflink_evidence_pack.zip"
+        if evidence_pack_path.exists():
+            with open(evidence_pack_path, "rb") as f:
+                return f.read()
+        return None
+    
     resp = requests.get(
         f"{API_BASE_URL}/api/v1/runs/{run_id}/evidence-pack",
         timeout=60,
@@ -74,7 +174,7 @@ def api_download_evidence_pack(run_id: str) -> Optional[bytes]:
 
 def api_list_runs(limit: int = 50) -> Dict[str, Any]:
     """
-    Call the ProofLink backend API to list recent runs.
+    Call the ProofLink backend API to list recent runs, or return current run in direct mode.
 
     Returns a dict like:
     {
@@ -95,6 +195,29 @@ def api_list_runs(limit: int = 50) -> Dict[str, Any]:
         ],
     }
     """
+    if not USE_API_BACKEND:
+        # In direct mode, return current run from session state if available
+        if "current_run_id" in st.session_state:
+            run_id = st.session_state["current_run_id"]
+            summary = st.session_state.get("current_summary", {})
+            return {
+                "count": 1,
+                "items": [
+                    {
+                        "run_id": run_id,
+                        "status": st.session_state.get("current_status", "completed"),
+                        "plan_name": summary.get("plan_name", "Unknown Plan"),
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                        "payroll_filename": "uploaded.csv",
+                        "rk_filename": "uploaded.csv",
+                        "has_evidence_pack": bool(st.session_state.get("current_summary", {}).get("evidence_pack_path")),
+                        "summary": summary,
+                    }
+                ],
+            }
+        return {"count": 0, "items": []}
+    
     params = {"limit": limit}
     resp = requests.get(f"{API_BASE_URL}/api/v1/runs", params=params, timeout=30)
     resp.raise_for_status()
@@ -701,8 +824,8 @@ def render_batch_reconciliation_tab():
             plan_name = f"{plan_prefix} #{idx}"
 
             try:
-                # Call API to create run
-                api_result = api_create_run(
+                # Call create_run (works in both API and direct modes)
+                api_result = create_run(
                     payroll_bytes=p_file.getvalue(),
                     payroll_filename=p_file.name,
                     rk_bytes=rk_file.getvalue(),
@@ -875,14 +998,17 @@ def render_reconciliation_tab():
             return
 
         try:
-            with st.spinner("Running ProofLink analysis via API..."):
-                api_result = api_create_run(
+            spinner_text = "Running ProofLink analysis via API..." if USE_API_BACKEND else "Running ProofLink analysis..."
+            with st.spinner(spinner_text):
+                api_result = create_run(
                     payroll_bytes=payroll_file.getvalue(),
                     payroll_filename=payroll_file.name,
                     rk_bytes=rk_file.getvalue(),
                     rk_filename=rk_file.name,
                     plan_name=plan_name,
                     plan_rules=plan_rules,
+                    payroll_vendor_hint=payroll_vendor_hint,
+                    rk_vendor_hint=rk_vendor_hint,
                 )
 
             run_id = api_result.get("run_id")
@@ -890,7 +1016,7 @@ def render_reconciliation_tab():
             status = api_result.get("status", "unknown")
 
             if not run_id:
-                st.error("API did not return a run_id.")
+                st.error("Run did not return a run_id.")
             else:
                 # Store run_id and summary in session state for later use
                 st.session_state["current_run_id"] = run_id
@@ -898,7 +1024,14 @@ def render_reconciliation_tab():
                 st.session_state["current_status"] = status
                 st.success("Reconciliation run completed.")
         except requests.RequestException as e:
-            st.error(f"Failed to contact ProofLink API: {e}")
+            if USE_API_BACKEND:
+                st.error(f"Failed to contact ProofLink API: {e}")
+            else:
+                st.error(f"Failed to run ProofLink engine: {e}")
+            return
+        except Exception as e:
+            st.error(f"Error running ProofLink analysis: {e}")
+            st.exception(e)
             return
 
     # Display results if available
