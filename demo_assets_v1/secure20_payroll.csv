@@ -1,4 +1,0 @@
-employee_id,age,is_hce,pay_date,payroll_pretax,payroll_roth,loan_amount
-E2000,55,1,2025-01-03,500.00,0.00,0.00
-E2001,52,1,2025-02-01,300.00,0.00,0.00
-E3000,40,0,2025-02-01,200.00,0.00,0.00

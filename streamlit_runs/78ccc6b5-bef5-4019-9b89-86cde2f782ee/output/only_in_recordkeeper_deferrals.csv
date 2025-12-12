@@ -1,0 +1,4 @@
+employee_id,amount_payroll,pay_date,amount_rk,deposit_date,_merge
+# E010 missing second row → reconciliation mismatch,,,0.0,,right_only
+# Missing 2024-01-15 row → reconciliation mismatch,,,0.0,,right_only
+# Missing first deferral → eligibility issue,,,0.0,,right_only

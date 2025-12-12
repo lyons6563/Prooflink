@@ -897,9 +897,9 @@ def render_reconciliation_tab():
     results = None
     stdout = ""
     
-    st.title("🔗 ProofLink – Payroll ↔ Recordkeeper Reconciliation")
+    st.title("🔗 ProofLink")
     st.write(
-        "Upload payroll and recordkeeper CSVs, run reconciliation, and download reports + manifests."
+        "Upload payroll and recordkeeper CSVs to analyze plan compliance and generate reports."
     )
 
     # ---------- Upload Section ----------
@@ -988,7 +988,7 @@ def render_reconciliation_tab():
         }
 
     run_button = st.button(
-        "▶️ Run Reconciliation", type="primary", use_container_width=True
+        "▶️ Run Analysis", type="primary", use_container_width=True
     )
 
     # ---------- Run Reconciliation ----------
@@ -1022,7 +1022,7 @@ def render_reconciliation_tab():
                 st.session_state["current_run_id"] = run_id
                 st.session_state["current_summary"] = summary_dict
                 st.session_state["current_status"] = status
-                st.success("Reconciliation run completed.")
+                st.success("Analysis completed.")
         except requests.RequestException as e:
             if USE_API_BACKEND:
                 st.error(f"Failed to contact ProofLink API: {e}")
@@ -1071,86 +1071,9 @@ def render_reconciliation_tab():
                 "This is a file-format issue, not a ProofLink engine error."
             )
         
-        # Display metrics from summary dict
-        st.subheader("Reconciliation Summary")
-        
-        # DEBUG: Raw summary dict
-        with st.expander("DEBUG: Raw summary dict"):
-            st.json(summary_dict)
-        
-        # Risk level indicator - use compute_run_risk_level for all cases
-        if all_totals_zero:
-            st.markdown("**Run Risk Level:** :grey_question: N/A (invalid file format)")
-        else:
-            # Compute risk level from summary - this is the SINGLE source of truth
-            risk_icon, risk_label = compute_run_risk_level(summary_dict, results_dict)
-            
-            # DEBUG: Risk inputs
-            timing_metrics = summary_dict.get("timing_metrics") or {}
-            debug_missing_deposits = timing_metrics.get("missing_deposits", 0)
-            debug_timing_risk = timing_metrics.get("timing_risk", "N/A")
-            debug_late_rows = timing_metrics.get("late_rows", 0)
-            
-            debug_deferral_mismatches = summary_dict.get("deferral_mismatch_count", 0)
-            debug_loan_mismatches = summary_dict.get("loan_mismatch_count", 0)
-            debug_late_deferral_count = summary_dict.get("late_deferral_count", 0)
-            
-            with st.expander("DEBUG: Risk inputs", expanded=False):
-                st.write({
-                    "timing_metrics": timing_metrics,
-                    "missing_deposits": debug_missing_deposits,
-                    "timing_risk": debug_timing_risk,
-                    "late_rows": debug_late_rows,
-                    "deferral_mismatch_count": debug_deferral_mismatches,
-                    "loan_mismatch_count": debug_loan_mismatches,
-                    "late_deferral_count": debug_late_deferral_count,
-                    "risk_icon": risk_icon,
-                    "risk_label": risk_label,
-                })
-            
-            st.markdown(f"**Run Risk Level:** {risk_icon} {risk_label}")
-        
-        st.divider()
-        
-        # Vendor info with confidence warnings
-        payroll_vendor = summary_dict.get("payroll_vendor", "Unknown / Generic")
-        rk_vendor = summary_dict.get("rk_vendor", "Unknown / Generic")
-        payroll_conf = summary_dict.get("payroll_vendor_confidence", 0.0)
-        rk_conf = summary_dict.get("rk_vendor_confidence", 0.0)
-        
-        col1, col2 = st.columns(2)
-        col1.metric("Payroll Vendor", payroll_vendor)
-        if payroll_conf < 0.65:
-            col1.warning(f"Low confidence: {payroll_conf:.2f}")
-        col2.metric("Recordkeeper", rk_vendor)
-        if rk_conf < 0.65:
-            col2.warning(f"Low confidence: {rk_conf:.2f}")
-        
-        st.divider()
-        
-        # Deferrals section
-        st.markdown("### Deferrals")
-        col3, col4, col5 = st.columns(3)
-        col3.metric("Total Payroll Deferrals", f"${summary_dict.get('total_deferrals_payroll', 0):,.2f}")
-        col4.metric("Total RK Deferrals", f"${summary_dict.get('total_deferrals_rk', 0):,.2f}")
-        col5.metric("Deferral Mismatches", f"{summary_dict.get('deferral_mismatch_count', 0):,}")
-        
-        # Loans section
-        st.markdown("### Loans")
-        col6, col7, col8 = st.columns(3)
-        col6.metric("Total Payroll Loans", f"${summary_dict.get('total_loans_payroll', 0):,.2f}")
-        col7.metric("Total RK Loans", f"${summary_dict.get('total_loans_rk', 0):,.2f}")
-        col8.metric("Loan Mismatches", f"{summary_dict.get('loan_mismatch_count', 0):,}")
-        
-        # Late contributions
-        st.markdown("### Late Contributions")
-        col9 = st.columns(1)[0]
-        col9.metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
-        
-        # Plan Health
+        # Plan Health / Plan Summary (shown first as hero section)
         plan_health = summary_dict.get("plan_health") if isinstance(summary_dict, dict) else None
         if plan_health:
-            st.divider()
             st.subheader("Plan Health")
             
             cols = st.columns(3)
@@ -1166,8 +1089,9 @@ def render_reconciliation_tab():
                     st.write("Issues by category:")
                     st.json(by_cat)
         
-        # Contribution Timing Analysis
         st.divider()
+        
+        # Contribution Timing Analysis
         st.markdown("### Contribution Timing Analysis")
         timing_metrics = summary_dict.get("timing_metrics", {})
         
@@ -1185,41 +1109,60 @@ def render_reconciliation_tab():
             cols[2].metric("Late Rows", late_rows)
             cols[3].metric("Missing Deposits", missing_deposits)
         
-        # Secure 2.0 Catch-Up Exceptions
+        # Secure 2.0 Exceptions
         st.divider()
-        st.markdown("### Secure 2.0 Catch-Up Exceptions")
+        st.markdown("### Secure 2.0 Exceptions")
         
-        # Read Secure 2.0 data from summary
-        secure_exceptions = summary_dict.get("secure20_exceptions") or []
-        secure_exception_count = summary_dict.get("secure20_exception_count", len(secure_exceptions))
-        secure_files = summary_dict.get("secure20_files") or {}
-        secure_csv_path = secure_files.get("exceptions_csv")
+        # Read unified Secure 2.0 summary
+        secure20 = summary_dict.get("secure20") or {}
+        if not isinstance(secure20, dict):
+            secure20 = {}
         
-        if not secure_exceptions:
-            st.write("No Secure 2.0 catch-up violations detected for this run.")
+        total_secure20 = secure20.get("total_violations", 0)
+        
+        if total_secure20 == 0:
+            st.success("No Secure 2.0 exceptions detected for this plan.")
         else:
-            st.write(f"{secure_exception_count} Secure 2.0 violation(s) detected (HCE pre-tax catch-up or related issues).")
+            st.metric("Total Secure 2.0 exceptions", total_secure20)
             
-            # Build a table-friendly structure
-            rows = []
-            for ex in secure_exceptions:
-                rows.append({
-                    "Employee ID": ex.get("employee_id"),
-                    "Pay Date": ex.get("pay_date"),
-                    "Pre-tax Catch-Up": ex.get("catchup_pretax"),
-                    "Roth Catch-Up": ex.get("catchup_roth"),
-                    "Issue Code": ex.get("issue_code"),
-                })
+            # Show breakdown by violation type
+            by_type = secure20.get("by_type", {})
+            if by_type:
+                st.caption("Breakdown by exception type:")
+                for vtype, count in sorted(by_type.items()):
+                    # Map violation types to human-readable labels
+                    label = vtype
+                    if vtype == "HCE catch-up not coded as Roth":
+                        label = "HCE catch-up not coded as Roth"
+                    elif vtype == "Potential catch-up coded in base deferral source":
+                        label = "Potential catch-up coded in base deferral source"
+                    st.write(f"- **{label}**: {count}")
             
-            if rows:
-                df = pd.DataFrame(rows)
-                st.dataframe(df, use_container_width=True)
+            # Show detailed violations table
+            violations = secure20.get("violations", [])
+            if violations:
+                with st.expander("View Secure 2.0 exception detail", expanded=False):
+                    df_secure20 = pd.DataFrame(violations)
+                    if not df_secure20.empty:
+                        # Select key columns for display
+                        display_cols = []
+                        for col in ["employee_id", "violation_type", "age", "is_hce", 
+                                   "deferral_pretax", "deferral_roth", "catchup_amount",
+                                   "issue_category", "severity", "correction_hint"]:
+                            if col in df_secure20.columns:
+                                display_cols.append(col)
+                        
+                        if display_cols:
+                            st.dataframe(df_secure20[display_cols], use_container_width=True)
+                        else:
+                            st.dataframe(df_secure20, use_container_width=True)
+                    else:
+                        st.write("No detailed rows available.")
             
-            if secure_csv_path:
-                st.caption(f"Secure 2.0 exceptions CSV: {secure_csv_path}")
-            
-            with st.expander("View Secure 2.0 exception details (raw)", expanded=False):
-                st.json(secure_exceptions)
+            # Show CSV path if available
+            secure20_csv_path = secure20.get("csv_path")
+            if secure20_csv_path:
+                st.caption(f"Secure 2.0 violations CSV: {secure20_csv_path}")
         
         # Eligibility Drift Detection
         st.divider()
@@ -1246,7 +1189,16 @@ def render_reconciliation_tab():
                 key=f"eligibility_drift_{run_id}",
             )
         
-        # Evidence pack download
+        # Reconciliation Summary (compact)
+        st.divider()
+        st.markdown("### Reconciliation Summary")
+        
+        col3, col4, col5 = st.columns(3)
+        col3.metric("Deferral Mismatches", f"{summary_dict.get('deferral_mismatch_count', 0):,}")
+        col4.metric("Loan Mismatches", f"{summary_dict.get('loan_mismatch_count', 0):,}")
+        col5.metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
+        
+        # Output Files
         st.divider()
         st.subheader("Output Files")
         
@@ -1258,7 +1210,7 @@ def render_reconciliation_tab():
                     st.error("Evidence pack not available for this run.")
                 else:
                     st.download_button(
-                        label="📥 Download Evidence Pack ZIP",
+                        label="📥 Download Evidence Pack (ZIP)",
                         data=data,
                         file_name=f"evidence_{run_id}.zip",
                         mime="application/zip",
@@ -1275,7 +1227,7 @@ def render_reconciliation_tab():
             with open(plan_ex_csv_path, "rb") as f:
                 plan_ex_data = f.read()
             st.download_button(
-                label="Download plan_exception_summary.csv",
+                label="Download Plan Exception Summary (CSV)",
                 data=plan_ex_data,
                 file_name="plan_exception_summary.csv",
                 mime="text/csv",
@@ -1299,9 +1251,7 @@ def render_reconciliation_tab():
         #             st.dataframe(loan_df)
 
 
-    # ---------- Run History ----------
-    st.markdown("---")
-    st.header("2. View Run History")
+    # Note: Run History is now in a separate tab
 
     try:
         with st.spinner("Loading recent runs from ProofLink API..."):
@@ -1467,18 +1417,12 @@ def render_run_history_tab():
 #  Main entrypoint with tabs
 # ==============================
 def main():
-    tab_recon, tab_timing, tab_batch, tab_history = st.tabs(
-        ["Reconciliation", "Contribution Timing", "Batch Reconciliation", "Run History"]
+    tab_analyze, tab_history = st.tabs(
+        ["Analyze Plan", "Run History"]
     )
 
-    with tab_recon:
+    with tab_analyze:
         render_reconciliation_tab()
-
-    with tab_timing:
-        render_contribution_timing_tab()
-
-    with tab_batch:
-        render_batch_reconciliation_tab()
     
     with tab_history:
         render_run_history_tab()

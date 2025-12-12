@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, Union
+from collections import Counter
 
 from datetime import datetime
 import hashlib
@@ -619,6 +620,39 @@ def run_prooflink_engine(
         output_dir=output_dir_path,
     )
     
+    # Build unified Secure 2.0 summary from CSV file
+    # This ensures we have all violations in one place, matching what Plan Health counts
+    secure20_violations = []
+    secure20_csv_path = secure20_summary.get("csv_path")
+    if secure20_csv_path and Path(secure20_csv_path).exists():
+        try:
+            secure20_df = pd.read_csv(secure20_csv_path)
+            if not secure20_df.empty:
+                # Convert DataFrame to list of dicts
+                secure20_violations = secure20_df.to_dict("records")
+        except Exception as exc:
+            print(f"[WARN] Failed to read Secure 2.0 violations CSV: {exc}")
+    
+    # Build unified summary structure
+    secure20_by_type = Counter(
+        v.get("violation_type", "Unknown") for v in secure20_violations
+    )
+    
+    # Create unified secure20_summary structure
+    unified_secure20_summary = {
+        "total_violations": len(secure20_violations),
+        "by_type": dict(secure20_by_type),
+        "violations": secure20_violations,
+        "csv_path": secure20_csv_path,
+        # Preserve original analyzer summary fields for backward compatibility
+        "total_rows": secure20_summary.get("total_rows", 0),
+        "hce_violation_count": secure20_summary.get("hce_violation_count", 0),
+        "potential_catchup_miscode_count": secure20_summary.get("potential_catchup_miscode_count", 0),
+    }
+    
+    # Replace the analyzer summary with unified summary
+    secure20_summary = unified_secure20_summary
+    
     # Run eligibility drift analysis
     # Uses the same fully processed payroll dataframe from reconciliation
     eligibility_summary = {
@@ -839,8 +873,12 @@ def run_prooflink_engine(
     summary["plan_exceptions"] = plan_ex_summary
     
     # Compute plan health score based on issue counts and participant count
-    # Extract by_category
-    by_category = plan_ex_summary.get("by_category", {})
+    # Extract by_category from plan_ex_summary, but use unified Secure 2.0 count
+    by_category = plan_ex_summary.get("by_category", {}).copy()
+    
+    # Override Secure 2.0 count with unified summary to ensure consistency
+    secure20_total = secure20_summary.get("total_violations", 0)
+    by_category["Secure 2.0"] = secure20_total
     
     # Compute weighted violations
     weighted_violations = _compute_weighted_violations(by_category)
