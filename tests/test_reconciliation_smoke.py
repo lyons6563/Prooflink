@@ -82,7 +82,7 @@ def test_reconciliation_no_mismatches(tmp_path: Path):
         payroll_csv=str(payroll_csv),
         rk_csv=str(rk_csv),
         payroll_vendor_hint="ADP",
-        rk_vendor_hint="Empower",
+        rk_vendor_hint="VENDOR_RK_1",
         output_dir=str(out_dir),
         proofs_dir=str(proofs_dir),
     )
@@ -157,7 +157,7 @@ def test_reconciliation_with_mismatches(tmp_path: Path):
         payroll_csv=str(payroll_csv),
         rk_csv=str(rk_csv),
         payroll_vendor_hint="ADP",
-        rk_vendor_hint="Empower",
+        rk_vendor_hint="VENDOR_RK_1",
         output_dir=str(out_dir),
         proofs_dir=str(proofs_dir),
     )

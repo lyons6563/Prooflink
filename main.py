@@ -517,8 +517,8 @@ def run_prooflink_engine(
     
     # Run contribution timing analysis directly to ensure it executes and we capture metrics
     # Derive output directory from evidence_pack_path to ensure all outputs go to the same directory
-    # evidence_pack_path example: "api_uploads\\<run_id>\\output\\prooflink_evidence_pack.zip"
-    # output_dir should be: "api_uploads\\<run_id>\\output" (same directory as reconciliation outputs)
+    # evidence_pack_path example: "<UPLOADS_DIR>\\<run_id>\\output\\prooflink_evidence_pack.zip"
+    # output_dir should be: "<UPLOADS_DIR>\\<run_id>\\output" (same directory as reconciliation outputs)
     if evidence_pack_path:
         output_dir_path = Path(evidence_pack_path).parent
     else:
@@ -1731,7 +1731,7 @@ DATA_OUT = Path(__file__).resolve().parents[1] / "data" / "processed"
 MAX_BUSINESS_DAYS_LAG = 5  # adjust per policy if needed
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
-CONFIG_NAME = "synthetic_400_adp_empower.json"
+CONFIG_NAME = "synthetic_400_adp_vendor_rk.json"
 
 PROOFS_DIR = Path(__file__).resolve().parents[1] / "proofs"
 PROOFS_DIR.mkdir(exist_ok=True)
@@ -2021,7 +2021,7 @@ COLUMN_MAP = {
 # VENDOR-SPECIFIC COLUMN MAPS (HYBRID: STRICT + FLEXIBLE)
 # =========================
 
-# For now we fully define ADP + Empower; others can fallback to the generic COLUMN_MAP.
+# For now we fully define ADP + Vendor RK; others can fallback to the generic COLUMN_MAP.
 # Structure:
 #   { vendor_name: { "required": {logical: [candidates...]}, "optional": {...} } }
 
@@ -2054,7 +2054,7 @@ PAYROLL_VENDOR_COLUMN_MAPS = {
 }
 
 RK_VENDOR_COLUMN_MAPS = {
-    "Empower": {
+    "VENDOR_RK_1": {
         "required": {
             "employee_id": ["Participant ID"],
             "deposit_date": ["Trade Date"],

@@ -5,6 +5,7 @@ Run with: python -m tests.run_secure20_smoketest
 (from the src folder)
 """
 
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -34,8 +35,9 @@ def main():
     
     # Create timestamped output directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = src_dir / "api_uploads" / "test_secure20" / timestamp / "output"
-    proofs_dir = src_dir / "api_uploads" / "test_secure20" / timestamp / "proofs"
+    uploads_dir = os.getenv("UPLOADS_DIR", "api_uploads")
+    output_dir = src_dir / uploads_dir / "test_secure20" / timestamp / "output"
+    proofs_dir = src_dir / uploads_dir / "test_secure20" / timestamp / "proofs"
     
     # Create EngineConfig
     config = EngineConfig(

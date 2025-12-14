@@ -14,10 +14,10 @@ def generate_synthetic_plan(
     num_periods: int = 6,
     start_date: str = "2025-01-03",
     payroll_filename: str = "payroll_adp_synthetic_400.csv",
-    rk_filename: str = "rk_empower_synthetic_400.csv",
+    rk_filename: str = "rk_vendor_rk_synthetic_400.csv",
 ) -> None:
     """
-    Generate a synthetic ADP-style payroll file and Empower-style recordkeeper file.
+    Generate a synthetic ADP-style payroll file and vendor RK-style recordkeeper file.
 
     - Biweekly payroll for num_periods
     - 400 employees
@@ -94,7 +94,7 @@ def generate_synthetic_plan(
             )
 
             # -------------------------
-            # RK (Empower-style) row
+            # RK (vendor-style) row
             # -------------------------
             # Business-day lag distribution
             lag_choice = random.random()

@@ -99,7 +99,7 @@ PAYROLL_VENDOR_SIGNATURES = {
 }
 
 RK_VENDOR_SIGNATURES = {
-    "Empower": {
+    "VENDOR_RK_1": {
         "signature_keywords": ["part_id", "post_date", "ee_pretax", "ee_roth"],
         "column_map": {
             "employee_id": ["part_id", "participant id", "employee_id"],

@@ -16,5 +16,8 @@ venv/
 # Proof artifacts (not source)
 proofs/*.json
 
+# Generated uploads and evidence artifacts
+api_uploads/
+
 RECONCILIATION_FUNCTIONS_ANALYSIS.md
 REFACTORING_SUMMARY.md

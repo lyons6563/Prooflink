@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import json
+import os
 import jwt
 from jwt import PyJWTError
 from pydantic import BaseModel, EmailStr
@@ -42,7 +43,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 # JWT token configuration
-SECRET_KEY = "CHANGE_ME_TO_A_SECURE_RANDOM_VALUE"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE_ME_TO_A_SECURE_RANDOM_VALUE")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
@@ -129,7 +130,8 @@ async def create_run(
         JSON with run_id, summary, and evidence_pack_available flag
     """
     run_id = str(uuid4())
-    run_dir = Path("api_uploads") / run_id
+    uploads_dir = os.getenv("UPLOADS_DIR", "api_uploads")
+    run_dir = Path(uploads_dir) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     
     # Save uploaded files

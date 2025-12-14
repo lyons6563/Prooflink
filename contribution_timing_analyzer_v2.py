@@ -303,8 +303,8 @@ def detect_vendors_from_files(payroll_df, rk_df, payroll_path=None, rk_path=None
 
     if rk_path:
         r = str(rk_path).lower()
-        if "empower" in r:
-            rk_vendor = "Empower"
+        if "vendor_rk" in r:
+            rk_vendor = "VENDOR_RK_1"
         elif "fidelity" in r:
             rk_vendor = "Fidelity"
         elif "principal" in r:
@@ -325,7 +325,7 @@ def detect_vendors_from_files(payroll_df, rk_df, payroll_path=None, rk_path=None
     if rk_df is not None and not rk_df.empty and not rk_vendor:
         rkcols = [c.lower() for c in rk_df.columns]
         if "participant number" in rkcols and "fund name" in rkcols:
-            rk_vendor = "Empower"
+            rk_vendor = "VENDOR_RK_1"
         if "ee pretax amt" in rkcols or "ee roth amt" in rkcols:
             rk_vendor = "Fidelity"
 
@@ -402,8 +402,8 @@ def detect_vendors(
         # 1) Filename hints (case-insensitive)
         if rk_source_name:
             source_lower = str(rk_source_name).lower()
-            if any(hint in source_lower for hint in ["empower"]):
-                rk_vendor = "Empower"
+            if any(hint in source_lower for hint in ["vendor_rk"]):
+                rk_vendor = "VENDOR_RK_1"
             elif any(hint in source_lower for hint in ["fidelity"]):
                 rk_vendor = "Fidelity"
             elif any(hint in source_lower for hint in ["vanguard"]):
@@ -414,10 +414,10 @@ def detect_vendors(
         # 2) Column pattern matching (scoring approach)
         vendor_scores = {}
         
-        # Empower signature columns
-        empower_cols = {"part_id", "post_date", "ee_pretax"}
-        if empower_cols.issubset(cols_lower):
-            vendor_scores["Empower"] = len(empower_cols)
+        # VENDOR_RK_1 signature columns
+        vendor_rk_cols = {"part_id", "post_date", "ee_pretax"}
+        if vendor_rk_cols.issubset(cols_lower):
+            vendor_scores["VENDOR_RK_1"] = len(vendor_rk_cols)
         
         # GenericRK signature columns
         generic_rk_cols = {"part_id", "post_date", "ee_pretax", "ee_roth", "loan_contr"}
@@ -618,7 +618,7 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
     )
     
     # Known vendors that require strict schema (only if confidence >= 0.65)
-    known_vendors = {"Empower", "GenericRK", "City457RK"}
+    known_vendors = {"VENDOR_RK_1", "GenericRK", "City457RK"}
     is_known_high_confidence = (vendor_str in known_vendors and vendor_confidence >= 0.65)
     
     if not is_known_high_confidence:
@@ -697,7 +697,7 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
 
     # Only reach here if we have a known vendor with high confidence
     # Enforce strict requirements for known vendors
-    if vendor_str in ("Empower", "GenericRK"):
+    if vendor_str in ("VENDOR_RK_1", "GenericRK"):
         mapping = {
             "employee_id": "Part_ID",
             "deposit_date": "Post_Date",
@@ -1052,7 +1052,7 @@ def resolve_default_paths(payroll_arg: str | None,
     raw_dir = project_root / "data" / "raw"
 
     default_payroll = raw_dir / "payroll_adp_synthetic_400.csv"
-    default_rk = raw_dir / "rk_empower_synthetic_400.csv"
+    default_rk = raw_dir / "rk_vendor_rk_synthetic_400.csv"
 
     if payroll_arg is None and rk_arg is None:
         return default_payroll, default_rk

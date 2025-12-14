@@ -21,8 +21,8 @@ from main import run_prooflink_engine, EngineConfig, EngineResult
 API_BASE_URL = os.getenv("PROOFLINK_API_URL")
 USE_API_BACKEND = bool(API_BASE_URL)
 
-# Simple local dev password (no secrets/env vars needed)
-APP_DEV_PASSWORD = "prooflink"
+# Simple local dev password (use environment variable for production)
+APP_DEV_PASSWORD = os.getenv("APP_DEV_PASSWORD", "prooflink")
 
 
 def api_create_run(
@@ -932,12 +932,12 @@ def render_reconciliation_tab():
     with st.expander("Advanced Options: Vendor Hints"):
         payroll_vendor_hint = st.selectbox(
             "Payroll Vendor",
-            ["Auto-detect", "ADP", "Paychex", "Paylocity", "Empower", "Generic"],
+            ["Auto-detect", "ADP", "Paychex", "Paylocity", "VENDOR_RK_1", "Generic"],
             index=0,
         )
         rk_vendor_hint = st.selectbox(
             "Recordkeeper Vendor",
-            ["Auto-detect", "Empower", "Fidelity", "Vanguard", "Generic"],
+            ["Auto-detect", "VENDOR_RK_1", "Fidelity", "Vanguard", "Generic"],
             index=0,
         )
 
