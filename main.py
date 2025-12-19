@@ -38,6 +38,8 @@ from match_reasonableness_analyzer import analyze_match_reasonableness
 
 from plan_exception_summary import build_plan_exception_summary
 
+from preflight import run_preflight
+
 
 @dataclass
 class RunSummary:
@@ -1138,6 +1140,24 @@ def run_reconciliation(
         - payroll_processed_df: pd.DataFrame with fully processed payroll data including
           derived columns (deferral_amount, loan_amount, is_hce, catchup_pretax, catchup_roth, etc.)
     """
+
+    # Preflight safety check
+    mapping_yaml_path = os.getenv("MAPPING_YAML_PATH", str(Path(__file__).parent / "mapping_example.yaml"))
+    safe, preflight_report = run_preflight(payroll_csv, rk_csv, mapping_yaml_path)
+    
+    if not safe:
+        missing_payroll = preflight_report.get('missing_fields', {}).get('payroll', [])
+        missing_rk = preflight_report.get('missing_fields', {}).get('recordkeeper', [])
+        warnings = preflight_report.get('warnings', [])
+        
+        error_msg = (
+            "Reconciliation execution blocked: preflight checks failed.\n"
+            f"Missing payroll fields: {', '.join(missing_payroll) if missing_payroll else 'none'}\n"
+            f"Missing recordkeeper fields: {', '.join(missing_rk) if missing_rk else 'none'}\n"
+            f"Warnings: {len(warnings)} issue(s) detected.\n"
+            f"Full preflight report available in preflight.py output. Run: python preflight.py {payroll_csv} {rk_csv} {mapping_yaml_path}"
+        )
+        raise RuntimeError(error_msg)
 
     # Resolve and prepare directories
     output_dir_path = Path(output_dir)
