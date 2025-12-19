@@ -1,8 +1,24 @@
+import os
 from pathlib import Path
-import sys
-from datetime import datetime, timedelta
 
+# -------------------------------------------------------
+# Preflight requires explicit mapping — set BEFORE imports
+# -------------------------------------------------------
+os.environ["MAPPING_YAML_PATH"] = str(
+    Path(__file__).resolve().parents[1] / "mapping_example.yaml"
+)
+
+import sys
+import csv
 import pandas as pd
+
+# Ensure repo root (where main.py lives) is on PYTHONPATH
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from main import run_reconciliation  # noqa: E402
+
 
 # Ensure src root is on PYTHONPATH
 ROOT_DIR = Path(__file__).resolve().parents[1]

@@ -1119,6 +1119,7 @@ def run_reconciliation(
     rk_vendor_hint: str | None = None,
     output_dir: str = "data/processed",
     proofs_dir: str = "proofs",
+    mapping_yaml_path: str | None = None,
 ) -> dict:
     """
     Execute a full ProofLink reconciliation run for the given payroll + RK CSVs.
@@ -1142,7 +1143,8 @@ def run_reconciliation(
     """
 
     # Preflight safety check
-    mapping_yaml_path = os.getenv("MAPPING_YAML_PATH", str(Path(__file__).parent / "mapping_example.yaml"))
+    if mapping_yaml_path is None:
+        mapping_yaml_path = os.getenv("MAPPING_YAML_PATH", str(Path(__file__).parent / "mapping_example.yaml"))
     safe, preflight_report = run_preflight(payroll_csv, rk_csv, mapping_yaml_path)
     
     if not safe:

@@ -1,0 +1,264 @@
+# Mapping Example Template
+# 
+# Purpose: Illustrative template demonstrating how arbitrary source column headers
+#          map to the canonical schema defined in CANONICAL_SCHEMA.md
+#
+# This is a template only, not production logic. It serves as documentation
+# for how source files with various column naming conventions would be mapped
+# to the canonical field names expected by the ProofLink reconciliation engine.
+#
+# Structure:
+#   - payroll: Payroll file column mappings
+#   - recordkeeper: Recordkeeper file column mappings
+#   - Each canonical field lists 2-3 example source column name variations
+
+payroll:
+  # Required Fields
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "Employee ID"
+      - "Emp ID"
+      - "Employee Number"
+  
+  # Optional Fields - Core Reconciliation
+  pay_date:
+    canonical: "pay_date"
+    examples:
+      - "Check Date"
+      - "Payroll Date"
+      - "Pay Period End Date"
+      - "pay_date"
+
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "EE Deferral $"
+      - "Pretax Deferral"
+      - "Employee Contribution"
+      - "def_amount"
+
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "EE Roth $"
+      - "Roth Deferral"
+      - "Roth Contribution"
+      - "roth_amount"
+
+  loan_amount:
+    canonical: "loan_amount"
+    examples:
+      - "Loan Repay $"
+      - "Loan Payment"
+      - "Loan Repayment"
+  
+  # Optional Fields - Secure 2.0 Compliance
+  is_hce:
+    canonical: "is_hce"
+    examples:
+      - "Is_HCE"
+      - "HCE Flag"
+      - "Highly Compensated"
+  
+  catchup_pretax:
+    canonical: "catchup_pretax"
+    examples:
+      - "Catchup_Pretax"
+      - "Catch Up Pretax"
+      - "Pretax Catchup"
+  
+  catchup_roth:
+    canonical: "catchup_roth"
+    examples:
+      - "Catchup_Roth"
+      - "Catch Up Roth"
+      - "Roth Catchup"
+  
+  # Optional Fields - Eligibility Drift Detection
+  employment_status:
+    canonical: "employment_status"
+    examples:
+      - "Employment Status"
+      - "Status"
+      - "Employee Status"
+  
+  termination_date:
+    canonical: "termination_date"
+    examples:
+      - "Termination Date"
+      - "Term Date"
+      - "Date of Termination"
+
+recordkeeper:
+  # Required Fields
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "Participant ID"
+      - "Part ID"
+      - "Employee ID"
+  
+  # Optional Fields - Core Reconciliation
+  deposit_date:
+    canonical: "deposit_date"
+    examples:
+      - "Post Date"
+      - "Transaction Date"
+      - "Trade Date"
+      - "record_date"
+
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "EE Pretax"
+      - "Pretax Contribution"
+      - "Employee Contribution"
+      - "def_amount"
+
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "EE Roth"
+      - "Roth Contribution"
+      - "Roth Cont"
+      - "roth_amount"
+
+  loan_amount:
+    canonical: "loan_amount"
+    examples:
+      - "Loan Contr"
+      - "Loan Contribution"
+      - "Loan Payment"
+
+# Example Complete Mappings
+# These show how a complete source file header would map to canonical fields
+
+example_mappings:
+  # Example 1: ADP-style payroll file
+  adp_payroll:
+    source_columns:
+      - "Emp ID"
+      - "Check Date"
+      - "EE Deferral $"
+      - "EE Roth $"
+      - "Loan Repay $"
+    canonical_mapping:
+      employee_id: "Emp ID"
+      pay_date: "Check Date"
+      ee_deferral: "EE Deferral $"
+      ee_roth: "EE Roth $"
+      loan_amount: "Loan Repay $"
+  
+  # Example 2: Generic payroll file with variant names
+  generic_payroll:
+    source_columns:
+      - "Employee Number"
+      - "Payroll Date"
+      - "Pretax Deferral"
+      - "Roth Deferral"
+      - "Loan Payment"
+    canonical_mapping:
+      employee_id: "Employee Number"
+      pay_date: "Payroll Date"
+      ee_deferral: "Pretax Deferral"
+      ee_roth: "Roth Deferral"
+      loan_amount: "Loan Payment"
+  
+  # Example 3: Recordkeeper file with participant ID
+  vendor_rk:
+    source_columns:
+      - "Participant ID"
+      - "Post Date"
+      - "EE Pretax"
+      - "EE Roth"
+      - "Loan Contr"
+    canonical_mapping:
+      employee_id: "Participant ID"
+      deposit_date: "Post Date"
+      ee_deferral: "EE Pretax"
+      ee_roth: "EE Roth"
+      loan_amount: "Loan Contr"
+  
+  # Example 4: Minimal payroll file (only required fields)
+  minimal_payroll:
+    source_columns:
+      - "Employee ID"
+      - "Deferral Amount"
+    canonical_mapping:
+      employee_id: "Employee ID"
+      ee_deferral: "Deferral Amount"
+      # Note: pay_date, ee_roth, loan_amount are missing but acceptable
+      # They will default to NaT, 0.0, and 0.0 respectively
+  
+  # Example 5: Payroll with Secure 2.0 fields
+  payroll_with_secure20:
+    source_columns:
+      - "Employee ID"
+      - "Pay Date"
+      - "EE Deferral $"
+      - "EE Roth $"
+      - "Is_HCE"
+      - "Catchup_Pretax"
+      - "Catchup_Roth"
+    canonical_mapping:
+      employee_id: "Employee ID"
+      pay_date: "Pay Date"
+      ee_deferral: "EE Deferral $"
+      ee_roth: "EE Roth $"
+      is_hce: "Is_HCE"
+      catchup_pretax: "Catchup_Pretax"
+      catchup_roth: "Catchup_Roth"
+  
+  # Example 6: Payroll with eligibility drift fields
+  payroll_with_eligibility:
+    source_columns:
+      - "Employee ID"
+      - "Pay Date"
+      - "EE Deferral $"
+      - "EE Roth $"
+      - "Employment Status"
+      - "Termination Date"
+    canonical_mapping:
+      employee_id: "Employee ID"
+      pay_date: "Pay Date"
+      ee_deferral: "EE Deferral $"
+      ee_roth: "EE Roth $"
+      employment_status: "Employment Status"
+      termination_date: "Termination Date"
+
+# Notes on Mapping Rules
+notes: |
+  Mapping Rules:
+  
+  1. Case Insensitivity:
+     - "Employee ID", "employee id", "EMPLOYEE_ID" all map to "employee_id"
+  
+  2. Whitespace Normalization:
+     - "Employee ID" → "employee_id"
+     - "Pay Date" → "pay_date"
+     - Internal whitespace normalized to underscores for matching
+  
+  3. Multiple Variants:
+     - A single canonical field can match multiple source column name variants
+     - The system uses fuzzy matching with similarity scoring (threshold: 0.6)
+  
+  4. Required vs Optional:
+     - employee_id: REQUIRED on both payroll and recordkeeper
+     - All other fields are OPTIONAL with safe defaults:
+       * Amounts default to 0.0
+       * Dates default to NaT (timing analysis may be limited)
+       * Booleans default to False
+  
+  5. Vendor-Specific Mappings:
+     - Known vendors (ADP, Paychex, etc.) have predefined mappings
+     - Unknown vendors fall back to generic variant matching
+     - Vendor detection uses signature keywords and confidence scoring
+  
+  6. Derived Fields:
+     - deferral_amount = ee_deferral + ee_roth (computed during processing)
+     - Not expected in source files
+  
+  7. Single-Amount Fallback:
+     - If separate pretax/roth columns not found, can use single "amount" column
+     - Treated as pretax, with roth = 0.0

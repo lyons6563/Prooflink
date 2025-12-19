@@ -1,10 +1,18 @@
+import os
 from pathlib import Path
+
+# -------------------------------------------------------
+# Preflight requires explicit mapping — set BEFORE imports
+# -------------------------------------------------------
+os.environ["MAPPING_YAML_PATH"] = str(
+    Path(__file__).resolve().parents[1] / "mapping_example.yaml"
+)
+
 import sys
 import csv
-
 import pandas as pd
 
-# Ensure src root (where main.py lives) is on PYTHONPATH
+# Ensure repo root (where main.py lives) is on PYTHONPATH
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
@@ -44,34 +52,34 @@ def test_reconciliation_no_mismatches(tmp_path: Path):
     # Simple 2 employees, matching deferrals + loans
     payroll_rows = [
         {
-            "EmpNumber": 1001,
-            "Payroll_Run_Date": "2025-01-15",
-            "PreTax_Defl": 100,
-            "Roth_Defl": 0,
-            "Loan_Pmt": 50,
+            "employee_id": 1001,
+            "pay_date": "2025-01-15",
+            "def_amount": 100,
+            "roth_amount": 0,
+            "loan_amount": 50,
         },
         {
-            "EmpNumber": 1002,
-            "Payroll_Run_Date": "2025-01-15",
-            "PreTax_Defl": 200,
-            "Roth_Defl": 0,
-            "Loan_Pmt": 0,
+            "employee_id": 1002,
+            "pay_date": "2025-01-15",
+            "def_amount": 200,
+            "roth_amount": 0,
+            "loan_amount": 0,
         },
     ]
     rk_rows = [
         {
-            "Part_ID": 1001,
-            "Post_Date": "2025-01-16",
-            "EE_PreTax": 100,
-            "EE_Roth": 0,
-            "Loan_Contr": 50,
+            "employee_id": 1001,
+            "record_date": "2025-01-16",
+            "def_amount": 100,
+            "roth_amount": 0,
+            "loan_amount": 50,
         },
         {
-            "Part_ID": 1002,
-            "Post_Date": "2025-01-16",
-            "EE_PreTax": 200,
-            "EE_Roth": 0,
-            "Loan_Contr": 0,
+            "employee_id": 1002,
+            "record_date": "2025-01-16",
+            "def_amount": 200,
+            "roth_amount": 0,
+            "loan_amount": 0,
         },
     ]
 
@@ -85,6 +93,7 @@ def test_reconciliation_no_mismatches(tmp_path: Path):
         rk_vendor_hint="VENDOR_RK_1",
         output_dir=str(out_dir),
         proofs_dir=str(proofs_dir),
+        mapping_yaml_path=str(Path(__file__).resolve().parents[1] / "mapping_example.yaml"),
     )
 
     # Evidence pack should exist
@@ -117,36 +126,36 @@ def test_reconciliation_with_mismatches(tmp_path: Path):
 
     payroll_rows = [
         {
-            "EmpNumber": 1001,
-            "Payroll_Run_Date": "2025-01-15",
-            "PreTax_Defl": 100,
-            "Roth_Defl": 0,
-            "Loan_Pmt": 50,
+            "employee_id": 1001,
+            "pay_date": "2025-01-15",
+            "def_amount": 100,
+            "roth_amount": 0,
+            "loan_amount": 50,
         },
         {
-            "EmpNumber": 1002,
-            "Payroll_Run_Date": "2025-01-15",
-            "PreTax_Defl": 200,
-            "Roth_Defl": 0,
-            "Loan_Pmt": 0,
+            "employee_id": 1002,
+            "pay_date": "2025-01-15",
+            "def_amount": 200,
+            "roth_amount": 0,
+            "loan_amount": 0,
         },
     ]
     rk_rows = [
         # Employee 1001 matches deferral but has loan mismatch
         {
-            "Part_ID": 1001,
-            "Post_Date": "2025-01-16",
-            "EE_PreTax": 100,
-            "EE_Roth": 0,
-            "Loan_Contr": 40,
+            "employee_id": 1001,
+            "record_date": "2025-01-16",
+            "def_amount": 100,
+            "roth_amount": 0,
+            "loan_amount": 40,
         },
         # Employee 1002 has a deferral mismatch
         {
-            "Part_ID": 1002,
-            "Post_Date": "2025-01-16",
-            "EE_PreTax": 195,
-            "EE_Roth": 0,
-            "Loan_Contr": 0,
+            "employee_id": 1002,
+            "record_date": "2025-01-16",
+            "def_amount": 195,
+            "roth_amount": 0,
+            "loan_amount": 0,
         },
     ]
 
@@ -160,6 +169,7 @@ def test_reconciliation_with_mismatches(tmp_path: Path):
         rk_vendor_hint="VENDOR_RK_1",
         output_dir=str(out_dir),
         proofs_dir=str(proofs_dir),
+        mapping_yaml_path=str(Path(__file__).resolve().parents[1] / "mapping_example.yaml"),
     )
 
     evidence_pack = Path(results["evidence_pack"])
