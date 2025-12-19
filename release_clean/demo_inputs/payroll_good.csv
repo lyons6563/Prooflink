@@ -1,0 +1,4 @@
+employee_id,pay_date,def_amount,roth_amount,loan_amount
+1001,2025-01-15,100,0,50
+1002,2025-01-15,200,0,0
+
