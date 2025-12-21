@@ -27,6 +27,15 @@ def build_manifest(run_context: RunContext) -> Dict[str, Any]:
         "engine": run_context.engine,
         "engine_version": run_context.engine_version,
         "execution_timestamp_utc": run_context.execution_timestamp_utc.isoformat(),
+        "inputs": {
+            "payroll_file_hash": None,
+            "recordkeeper_file_hash": None,
+            "mapping_config_hash": None,
+        },
+        "outputs": {
+            "results_hash": None,
+            "violations_hash": None,
+        },
     }
 
 
