@@ -47,3 +47,18 @@ ProofLink_asset_freeze_*.zip/
 # Local release / test working dirs
 pl_test/
 Desktop/pl_test/
+
+# Local packaging / scratch
+tmp_run_outputs/
+ProofLink_asset_freeze_2025-12-19_CLEAN/
+
+# Local demo inputs
+data/raw/demo_broken_payroll.csv
+
+# Local scripts (local utilities, not part of core engine)
+scripts/make_release_zip.ps1
+scripts/create_architecture_diagram.py
+scripts/test_preflight_gate.py
+
+# Local images
+docs/architecture.png
