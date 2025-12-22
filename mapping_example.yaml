@@ -103,6 +103,7 @@ recordkeeper:
   deposit_date:
     canonical: "deposit_date"
     examples:
+      - "deposit_date"
       - "Post Date"
       - "Transaction Date"
       - "Trade Date"
@@ -111,6 +112,7 @@ recordkeeper:
   ee_deferral:
     canonical: "EE Deferral $"
     examples:
+      - "EE Deferral $"
       - "EE Pretax"
       - "Pretax Contribution"
       - "Employee Contribution"
@@ -119,6 +121,7 @@ recordkeeper:
   ee_roth:
     canonical: "EE Roth $"
     examples:
+      - "EE Roth $"
       - "EE Roth"
       - "Roth Contribution"
       - "Roth Cont"

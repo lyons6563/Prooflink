@@ -96,23 +96,30 @@ def map_headers_to_canonical(
     return mapped
 
 
-def compute_join_key_coverage(csv_path: str, employee_id_col: str) -> float:
+def compute_join_key_coverage(csv_path: str, employee_id_col: str) -> Tuple[float, int]:
     """
     Compute percentage of rows where employee_id is non-empty.
     Reads the employee_id column efficiently.
+    
+    Returns:
+        Tuple of (coverage_percentage: float, row_count: int)
+        If file is empty, returns (0.0, 0)
     """
     try:
         # Read only the employee_id column for efficiency
         df = pd.read_csv(csv_path, usecols=[employee_id_col], dtype=str)
-        if len(df) == 0:
-            return 0.0
+        row_count = len(df)
+        
+        if row_count == 0:
+            return (0.0, 0)
         
         # Count non-empty values (not NaN, not empty string after strip)
         non_empty = df[employee_id_col].astype(str).str.strip().ne('').sum()
-        return (non_empty / len(df)) * 100.0
+        coverage = (non_empty / row_count) * 100.0
+        return (coverage, row_count)
     except Exception as e:
         # If we can't read, return 0 (will be reported as warning)
-        return 0.0
+        return (0.0, 0)
 
 
 def run_preflight(
@@ -140,8 +147,25 @@ def run_preflight(
         'missing_fields': {'payroll': [], 'recordkeeper': []},
         'mapped_fields': {'payroll': {}, 'recordkeeper': {}},
         'join_key_coverage': {'payroll': 0.0, 'recordkeeper': 0.0},
+        'join_key_row_count': {'payroll': 0, 'recordkeeper': 0},
+        'join_key_empty_file': {'payroll': False, 'recordkeeper': False},
+        'join_key_not_mapped': {'payroll': False, 'recordkeeper': False},
         'warnings': []
     }
+    
+    # Check file existence first
+    payroll_path_obj = Path(payroll_csv_path)
+    rk_path_obj = Path(recordkeeper_csv_path)
+    
+    blocked_files = []
+    if not payroll_path_obj.exists():
+        blocked_files.append(('payroll', payroll_csv_path))
+    if not rk_path_obj.exists():
+        blocked_files.append(('recordkeeper', recordkeeper_csv_path))
+    
+    if blocked_files:
+        report['blocked_files'] = blocked_files
+        return (False, report)
     
     # Load mapping YAML
     try:
@@ -176,6 +200,57 @@ def run_preflight(
     report['mapped_fields']['payroll'] = payroll_mapped
     report['mapped_fields']['recordkeeper'] = rk_mapped
     
+    # Strict validation: verify all source headers referenced in mapping exist in CSV headers
+    # For each canonical field in the mapping, check if its example headers exist in the CSV
+    # Collect headers that are referenced in the mapping but don't exist in the CSV
+    missing_payroll_headers = []
+    missing_rk_headers = []
+    
+    # Normalize CSV headers for comparison
+    normalized_payroll_headers = {normalize_column_name(h) for h in payroll_headers}
+    normalized_rk_headers = {normalize_column_name(h) for h in rk_headers}
+    
+    # Check payroll: for each canonical field in mapping, verify at least one example header exists
+    payroll_file_section = mapping_data.get('payroll', {})
+    for field_key, field_data in payroll_file_section.items():
+        if isinstance(field_data, dict) and 'examples' in field_data:
+            examples = field_data.get('examples', [])
+            if isinstance(examples, list) and examples:
+                # Check if any example (normalized) exists in CSV headers
+                example_exists = any(
+                    normalize_column_name(example) in normalized_payroll_headers
+                    for example in examples
+                )
+                # If no example exists, this field cannot be mapped
+                # Report the first example as the missing header (using original form)
+                if not example_exists:
+                    missing_payroll_headers.append(examples[0])
+    
+    # Check recordkeeper: same logic
+    rk_file_section = mapping_data.get('recordkeeper', {})
+    for field_key, field_data in rk_file_section.items():
+        if isinstance(field_data, dict) and 'examples' in field_data:
+            examples = field_data.get('examples', [])
+            if isinstance(examples, list) and examples:
+                example_exists = any(
+                    normalize_column_name(example) in normalized_rk_headers
+                    for example in examples
+                )
+                if not example_exists:
+                    missing_rk_headers.append(examples[0])
+    
+    # Remove duplicates and sort for deterministic output
+    missing_payroll_headers = sorted(list(set(missing_payroll_headers)))
+    missing_rk_headers = sorted(list(set(missing_rk_headers)))
+    
+    # If any headers are missing, block the run
+    if missing_payroll_headers or missing_rk_headers:
+        report['missing_mapped_headers'] = {
+            'payroll': missing_payroll_headers,
+            'recordkeeper': missing_rk_headers
+        }
+        return (False, report)
+    
     # Check required fields
     # Payroll: employee_id required
     if 'employee_id' not in payroll_mapped:
@@ -204,41 +279,67 @@ def run_preflight(
         report['warnings'].append('deposit_date not found in recordkeeper - timing analysis will be limited')
     
     # Compute join-key coverage
-    if 'employee_id' in payroll_mapped:
+    # Check payroll join key
+    if 'employee_id' not in payroll_mapped:
+        report['join_key_not_mapped']['payroll'] = True
+    else:
         payroll_emp_id_col = payroll_mapped['employee_id']
-        report['join_key_coverage']['payroll'] = compute_join_key_coverage(
+        coverage, row_count = compute_join_key_coverage(
             payroll_csv_path, payroll_emp_id_col
         )
-        if report['join_key_coverage']['payroll'] < 100.0:
+        report['join_key_coverage']['payroll'] = coverage
+        report['join_key_row_count']['payroll'] = row_count
+        
+        if row_count == 0:
+            report['join_key_empty_file']['payroll'] = True
+        elif coverage < 100.0:
             report['warnings'].append(
-                f"Payroll employee_id coverage: {report['join_key_coverage']['payroll']:.1f}% "
-                f"({100.0 - report['join_key_coverage']['payroll']:.1f}% rows have empty employee_id)"
+                f"Payroll employee_id coverage: {coverage:.1f}% "
+                f"({100.0 - coverage:.1f}% rows have empty employee_id)"
             )
-    else:
-        report['warnings'].append('Cannot compute payroll join-key coverage: employee_id not mapped')
     
-    if 'employee_id' in rk_mapped:
+    # Check recordkeeper join key
+    if 'employee_id' not in rk_mapped:
+        report['join_key_not_mapped']['recordkeeper'] = True
+    else:
         rk_emp_id_col = rk_mapped['employee_id']
-        report['join_key_coverage']['recordkeeper'] = compute_join_key_coverage(
+        coverage, row_count = compute_join_key_coverage(
             recordkeeper_csv_path, rk_emp_id_col
         )
-        if report['join_key_coverage']['recordkeeper'] < 100.0:
+        report['join_key_coverage']['recordkeeper'] = coverage
+        report['join_key_row_count']['recordkeeper'] = row_count
+        
+        if row_count == 0:
+            report['join_key_empty_file']['recordkeeper'] = True
+        elif coverage < 100.0:
             report['warnings'].append(
-                f"Recordkeeper employee_id coverage: {report['join_key_coverage']['recordkeeper']:.1f}% "
-                f"({100.0 - report['join_key_coverage']['recordkeeper']:.1f}% rows have empty employee_id)"
+                f"Recordkeeper employee_id coverage: {coverage:.1f}% "
+                f"({100.0 - coverage:.1f}% rows have empty employee_id)"
             )
-    else:
-        report['warnings'].append('Cannot compute recordkeeper join-key coverage: employee_id not mapped')
+    
+    # Block if join key issues are detected
+    if (report['join_key_not_mapped']['payroll'] or 
+        report['join_key_not_mapped']['recordkeeper'] or
+        report['join_key_empty_file']['payroll'] or 
+        report['join_key_empty_file']['recordkeeper']):
+        # Will be handled in print function and safe determination
+        pass
     
     # Determine if safe to run
     # Core requirements:
     # 1. employee_id must be present on both sides
     # 2. At least one amount field must be present on both sides
+    # 3. Join key must be mapped on both sides
+    # 4. CSV files must have at least one row
     safe = (
         'employee_id' in payroll_mapped and
         'employee_id' in rk_mapped and
         payroll_has_amount and
-        rk_has_amount
+        rk_has_amount and
+        not report['join_key_not_mapped']['payroll'] and
+        not report['join_key_not_mapped']['recordkeeper'] and
+        not report['join_key_empty_file']['payroll'] and
+        not report['join_key_empty_file']['recordkeeper']
     )
     
     return (safe, report)
@@ -247,6 +348,60 @@ def run_preflight(
 def print_preflight_report(report: Dict[str, Any]) -> None:
     """Print a human-readable preflight report."""
     print("\n=== Preflight Report ===\n")
+    
+    # Check for blocked files first
+    if 'blocked_files' in report and report['blocked_files']:
+        print("BLOCKED:")
+        for file_type, file_path in report['blocked_files']:
+            if file_type == 'payroll':
+                print(f"- Payroll file not found: {file_path}")
+            elif file_type == 'recordkeeper':
+                print(f"- Recordkeeper file not found: {file_path}")
+        print()
+        return
+    
+    # Check for missing mapped headers
+    if 'missing_mapped_headers' in report and report['missing_mapped_headers']:
+        print("BLOCKED:")
+        missing_payroll = report['missing_mapped_headers'].get('payroll', [])
+        missing_rk = report['missing_mapped_headers'].get('recordkeeper', [])
+        if missing_payroll:
+            print(f"- Missing payroll headers referenced by mapping: {', '.join(missing_payroll)}")
+        if missing_rk:
+            print(f"- Missing recordkeeper headers referenced by mapping: {', '.join(missing_rk)}")
+        print()
+        return
+    
+    # Check for join key not mapped (block immediately, don't show coverage)
+    join_key_not_mapped = False
+    if report.get('join_key_not_mapped', {}).get('payroll', False):
+        print("BLOCKED:")
+        print("- Payroll join key (employee_id) is not mapped or not present in headers")
+        join_key_not_mapped = True
+    if report.get('join_key_not_mapped', {}).get('recordkeeper', False):
+        if not join_key_not_mapped:
+            print("BLOCKED:")
+        print("- Recordkeeper join key (employee_id) is not mapped or not present in headers")
+        join_key_not_mapped = True
+    
+    if join_key_not_mapped:
+        print()
+        return
+    
+    # Check for empty files (will show in coverage section, but still block)
+    join_key_empty = False
+    if report.get('join_key_empty_file', {}).get('payroll', False):
+        join_key_empty = True
+    if report.get('join_key_empty_file', {}).get('recordkeeper', False):
+        join_key_empty = True
+    
+    if join_key_empty:
+        print("BLOCKED:")
+        if report.get('join_key_empty_file', {}).get('payroll', False):
+            print("- Payroll file has 0 rows (cannot compute join-key coverage)")
+        if report.get('join_key_empty_file', {}).get('recordkeeper', False):
+            print("- Recordkeeper file has 0 rows (cannot compute join-key coverage)")
+        print()
     
     # Missing fields
     if report['missing_fields']['payroll'] or report['missing_fields']['recordkeeper']:
@@ -271,8 +426,22 @@ def print_preflight_report(report: Dict[str, Any]) -> None:
     
     # Join key coverage
     print("JOIN-KEY COVERAGE:")
-    print(f"  Payroll employee_id: {report['join_key_coverage']['payroll']:.1f}%")
-    print(f"  Recordkeeper employee_id: {report['join_key_coverage']['recordkeeper']:.1f}%")
+    
+    # Payroll coverage
+    if report.get('join_key_empty_file', {}).get('payroll', False):
+        print("  Payroll employee_id: 0 rows (cannot compute)")
+    elif report.get('join_key_not_mapped', {}).get('payroll', False):
+        print("  Payroll employee_id: not mapped")
+    else:
+        print(f"  Payroll employee_id: {report['join_key_coverage']['payroll']:.1f}%")
+    
+    # Recordkeeper coverage
+    if report.get('join_key_empty_file', {}).get('recordkeeper', False):
+        print("  Recordkeeper employee_id: 0 rows (cannot compute)")
+    elif report.get('join_key_not_mapped', {}).get('recordkeeper', False):
+        print("  Recordkeeper employee_id: not mapped")
+    else:
+        print(f"  Recordkeeper employee_id: {report['join_key_coverage']['recordkeeper']:.1f}%")
     print()
     
     # Warnings

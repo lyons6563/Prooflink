@@ -1,0 +1,61 @@
+# Demo Mapping Configuration
+# Explicit mapping for demo files to ensure stable, predictable behavior
+
+payroll:
+  # Required Fields
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "employee_id"
+  
+  # Date Fields
+  pay_date:
+    canonical: "pay_date"
+    examples:
+      - "pay_date"
+  
+  # Amount Fields
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "EE Deferral $"
+  
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "EE Roth $"
+  
+  loan_amount:
+    canonical: "loan_amount"
+    examples:
+      - "loan_amount"
+
+recordkeeper:
+  # Required Fields
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "employee_id"
+  
+  # Date Fields
+  deposit_date:
+    canonical: "deposit_date"
+    examples:
+      - "deposit_date"
+  
+  # Amount Fields
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "EE Deferral $"
+  
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "EE Roth $"
+  
+  loan_amount:
+    canonical: "loan_amount"
+    examples:
+      - "loan_amount"
+

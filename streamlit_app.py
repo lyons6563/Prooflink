@@ -17,6 +17,9 @@ import uuid
 # Import engine for direct mode
 from main import run_prooflink_engine, EngineConfig, EngineResult
 
+# Import preflight for validation
+from preflight import run_preflight
+
 # API client configuration
 API_BASE_URL = os.getenv("PROOFLINK_API_URL")
 USE_API_BACKEND = bool(API_BASE_URL)
@@ -958,20 +961,47 @@ def render_reconciliation_tab():
     # ---------- Upload Section ----------
     st.header("1. Upload Files")
     
-    # Demo files preset button
+    # Load Demo checkbox
+    use_demo = st.checkbox("📁 Load Demo Files", value=False, help="Load demo files from demo/ folder (no upload required)")
+    
+    # Demo files preset button (legacy - runs immediately)
     col_demo, col_upload = st.columns([1, 3])
     with col_demo:
-        demo_button = st.button("📁 Use Demo Files", type="secondary", use_container_width=True)
+        demo_button = st.button("▶️ Run Demo Files Now", type="secondary", use_container_width=True)
     
     col1, col2 = st.columns(2)
 
     with col1:
         st.caption("Upload Payroll CSV")
-        payroll_file = st.file_uploader(" ", type=["csv"], key="recon_payroll")
+        payroll_file = st.file_uploader(" ", type=["csv"], key="recon_payroll", disabled=use_demo)
 
     with col2:
         st.caption("Upload Recordkeeper CSV")
-        rk_file = st.file_uploader("  ", type=["csv"], key="recon_rk")
+        rk_file = st.file_uploader("  ", type=["csv"], key="recon_rk", disabled=use_demo)
+    
+    # Load demo files if checkbox is checked
+    if use_demo:
+        repo_root = Path(__file__).resolve().parent
+        demo_payroll_path = repo_root / "demo" / "demo_payroll.csv"
+        demo_rk_path = repo_root / "demo" / "demo_recordkeeper.csv"
+        
+        if demo_payroll_path.exists() and demo_rk_path.exists():
+            # Read demo files and create file-like objects for compatibility
+            with open(demo_payroll_path, "rb") as f:
+                payroll_bytes = f.read()
+            with open(demo_rk_path, "rb") as f:
+                rk_bytes = f.read()
+            
+            # Create BytesIO objects to simulate uploaded files
+            payroll_file = io.BytesIO(payroll_bytes)
+            payroll_file.name = "demo_payroll.csv"
+            rk_file = io.BytesIO(rk_bytes)
+            rk_file.name = "demo_recordkeeper.csv"
+            
+            st.info("✅ Demo files loaded from demo/ folder")
+        else:
+            st.error(f"Demo files not found. Expected:\n- {demo_payroll_path}\n- {demo_rk_path}")
+            use_demo = False
 
     # Plan name input
     plan_name = st.text_input("Plan name", value="Demo Plan")
@@ -1007,17 +1037,32 @@ def render_reconciliation_tab():
         # Run directly with demo files
         try:
             spinner_text = "Running ProofLink analysis with demo files..." if USE_API_BACKEND else "Running ProofLink analysis with demo files..."
-            with st.spinner(spinner_text):
-                api_result = create_run(
-                    payroll_bytes=payroll_bytes,
-                    payroll_filename=payroll_filename,
-                    rk_bytes=rk_bytes,
-                    rk_filename=rk_filename,
-                    plan_name=plan_name,
-                    plan_rules=plan_rules,
-                    payroll_vendor_hint=payroll_vendor_hint,
-                    rk_vendor_hint=rk_vendor_hint,
-                )
+            
+            # Use demo mapping if available, otherwise use default
+            demo_mapping_path = repo_root / "demo" / "demo_mapping.yaml"
+            original_mapping_path = os.environ.get("MAPPING_YAML_PATH")
+            if demo_mapping_path.exists():
+                os.environ["MAPPING_YAML_PATH"] = str(demo_mapping_path)
+            
+            try:
+                with st.spinner(spinner_text):
+                    api_result = create_run(
+                        payroll_bytes=payroll_bytes,
+                        payroll_filename=payroll_filename,
+                        rk_bytes=rk_bytes,
+                        rk_filename=rk_filename,
+                        plan_name=plan_name,
+                        plan_rules=plan_rules,
+                        payroll_vendor_hint=payroll_vendor_hint,
+                        rk_vendor_hint=rk_vendor_hint,
+                    )
+            finally:
+                # Restore original mapping path
+                if demo_mapping_path.exists():
+                    if original_mapping_path:
+                        os.environ["MAPPING_YAML_PATH"] = original_mapping_path
+                    else:
+                        os.environ.pop("MAPPING_YAML_PATH", None)
             
             run_id = api_result.get("run_id")
             summary_dict = api_result.get("summary", {})
@@ -1109,8 +1154,162 @@ def render_reconciliation_tab():
             "align_first_month": align_first_month,
         }
 
+    # ---------- Mapping Readiness Check ----------
+    st.header("2. Mapping Readiness")
+    
+    preflight_safe = False
+    preflight_report = None
+    preflight_blocked_reasons = []
+    
+    # Check preflight if files are uploaded
+    if payroll_file and rk_file:
+        # Save files temporarily for preflight check
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            payroll_temp_path = temp_path / (payroll_file.name or "payroll.csv")
+            rk_temp_path = temp_path / (rk_file.name or "rk.csv")
+            
+            # Use demo mapping if demo files are loaded, otherwise use default
+            if use_demo:
+                mapping_path = BASE_DIR / "demo" / "demo_mapping.yaml"
+            else:
+                mapping_path = BASE_DIR / "mapping_example.yaml"
+            
+            # Write uploaded files to temp location
+            # Handle both BytesIO objects and uploaded file objects
+            if hasattr(payroll_file, 'getvalue'):
+                payroll_data = payroll_file.getvalue()
+            else:
+                payroll_file.seek(0)
+                payroll_data = payroll_file.read()
+                payroll_file.seek(0)
+            
+            if hasattr(rk_file, 'getvalue'):
+                rk_data = rk_file.getvalue()
+            else:
+                rk_file.seek(0)
+                rk_data = rk_file.read()
+                rk_file.seek(0)
+            
+            with open(payroll_temp_path, "wb") as f:
+                f.write(payroll_data)
+            with open(rk_temp_path, "wb") as f:
+                f.write(rk_data)
+            
+            # Run preflight check
+            try:
+                preflight_safe, preflight_report = run_preflight(
+                    payroll_csv_path=str(payroll_temp_path),
+                    recordkeeper_csv_path=str(rk_temp_path),
+                    mapping_yaml_path=str(mapping_path)
+                )
+            except Exception as e:
+                st.error(f"Preflight check failed: {e}")
+                preflight_safe = False
+                preflight_report = {"warnings": [f"Preflight error: {e}"]}
+    
+    # Display Mapping Readiness checklist
+    checklist_col1, checklist_col2 = st.columns([3, 1])
+    
+    with checklist_col1:
+        st.markdown("**Mapping Readiness Checklist:**")
+        
+        # Files uploaded
+        files_ok = payroll_file is not None and rk_file is not None
+        files_status = "✅" if files_ok else "❌"
+        st.markdown(f"{files_status} Files uploaded")
+        
+        # Mapping loaded
+        if not payroll_file or not rk_file:
+            mapping_status = "⏳"
+        elif preflight_report is None:
+            mapping_status = "⏳"
+        elif preflight_report and "warnings" in preflight_report:
+            # Check if mapping failed to load
+            mapping_failed = any("Failed to load mapping file" in str(w) for w in preflight_report.get("warnings", []))
+            mapping_status = "❌" if mapping_failed else "✅"
+        else:
+            mapping_status = "✅"
+        st.markdown(f"{mapping_status} Mapping loaded")
+        
+        # Headers match mapping
+        if not payroll_file or not rk_file:
+            headers_status = "⏳"
+        elif preflight_report is None:
+            headers_status = "⏳"
+        elif preflight_report and "missing_mapped_headers" in preflight_report:
+            missing_payroll = preflight_report["missing_mapped_headers"].get("payroll", [])
+            missing_rk = preflight_report["missing_mapped_headers"].get("recordkeeper", [])
+            headers_status = "❌" if (missing_payroll or missing_rk) else "✅"
+        else:
+            headers_status = "✅"
+        st.markdown(f"{headers_status} Headers match mapping")
+        
+        # Join key coverage OK
+        if not payroll_file or not rk_file:
+            join_key_status = "⏳"
+        elif preflight_report is None:
+            join_key_status = "⏳"
+        elif preflight_report:
+            if (preflight_report.get("join_key_not_mapped", {}).get("payroll", False) or
+                preflight_report.get("join_key_not_mapped", {}).get("recordkeeper", False) or
+                preflight_report.get("join_key_empty_file", {}).get("payroll", False) or
+                preflight_report.get("join_key_empty_file", {}).get("recordkeeper", False)):
+                join_key_status = "❌"
+            else:
+                join_key_status = "✅"
+        else:
+            join_key_status = "✅"
+        st.markdown(f"{join_key_status} Join key coverage OK")
+    
+    with checklist_col2:
+        # Overall status
+        if not files_ok:
+            st.markdown("**Status:** ⏳ Waiting for files")
+        elif preflight_safe:
+            st.markdown("**Status:** ✅ Ready")
+        else:
+            st.markdown("**Status:** ❌ Blocked")
+    
+    # Show BLOCKED reasons if preflight failed
+    if preflight_report and not preflight_safe:
+        st.error("**BLOCKED:**")
+        
+        # Check for blocked files
+        if "blocked_files" in preflight_report and preflight_report["blocked_files"]:
+            for file_type, file_path in preflight_report["blocked_files"]:
+                if file_type == "payroll":
+                    st.error(f"- Payroll file not found: {file_path}")
+                elif file_type == "recordkeeper":
+                    st.error(f"- Recordkeeper file not found: {file_path}")
+        
+        # Check for missing mapped headers
+        if "missing_mapped_headers" in preflight_report:
+            missing_payroll = preflight_report["missing_mapped_headers"].get("payroll", [])
+            missing_rk = preflight_report["missing_mapped_headers"].get("recordkeeper", [])
+            if missing_payroll:
+                st.error(f"- Missing payroll headers referenced by mapping: {', '.join(missing_payroll)}")
+            if missing_rk:
+                st.error(f"- Missing recordkeeper headers referenced by mapping: {', '.join(missing_rk)}")
+        
+        # Check for join key issues
+        if preflight_report.get("join_key_not_mapped", {}).get("payroll", False):
+            st.error("- Payroll join key (employee_id) is not mapped or not present in headers")
+        if preflight_report.get("join_key_not_mapped", {}).get("recordkeeper", False):
+            st.error("- Recordkeeper join key (employee_id) is not mapped or not present in headers")
+        if preflight_report.get("join_key_empty_file", {}).get("payroll", False):
+            st.error("- Payroll file has 0 rows (cannot compute join-key coverage)")
+        if preflight_report.get("join_key_empty_file", {}).get("recordkeeper", False):
+            st.error("- Recordkeeper file has 0 rows (cannot compute join-key coverage)")
+    
+    st.markdown("---")
+    
+    # Run button - disabled if preflight fails
     run_button = st.button(
-        "▶️ Run Analysis", type="primary", use_container_width=True
+        "▶️ Run Analysis", 
+        type="primary", 
+        use_container_width=True,
+        disabled=not preflight_safe or not files_ok
     )
 
     # ---------- Run Reconciliation ----------
@@ -1120,30 +1319,63 @@ def render_reconciliation_tab():
             st.error("Please upload BOTH a payroll CSV and a recordkeeper CSV.")
             return
         
+        # Block if preflight failed
+        if not preflight_safe:
+            st.error("Cannot run analysis: Preflight checks failed. Please fix the issues shown above.")
+            return
+        
         # Validate recordkeeper headers before running
         is_valid, error_msg = validate_recordkeeper_headers(rk_file)
         if not is_valid:
             st.error(error_msg)
             st.stop()
         
-        payroll_bytes = payroll_file.getvalue()
-        payroll_filename = payroll_file.name
-        rk_bytes = rk_file.getvalue()
-        rk_filename = rk_file.name
+        # Handle both BytesIO objects and uploaded file objects
+        if hasattr(payroll_file, 'getvalue'):
+            payroll_bytes = payroll_file.getvalue()
+        else:
+            payroll_file.seek(0)
+            payroll_bytes = payroll_file.read()
+            payroll_file.seek(0)
+        
+        if hasattr(rk_file, 'getvalue'):
+            rk_bytes = rk_file.getvalue()
+        else:
+            rk_file.seek(0)
+            rk_bytes = rk_file.read()
+            rk_file.seek(0)
+        
+        payroll_filename = getattr(payroll_file, 'name', 'payroll.csv')
+        rk_filename = getattr(rk_file, 'name', 'rk.csv')
 
         try:
             spinner_text = "Running ProofLink analysis via API..." if USE_API_BACKEND else "Running ProofLink analysis..."
-            with st.spinner(spinner_text):
-                api_result = create_run(
-                    payroll_bytes=payroll_bytes,
-                    payroll_filename=payroll_filename,
-                    rk_bytes=rk_bytes,
-                    rk_filename=rk_filename,
-                    plan_name=plan_name,
-                    plan_rules=plan_rules,
-                    payroll_vendor_hint=payroll_vendor_hint,
-                    rk_vendor_hint=rk_vendor_hint,
-                )
+            
+            # Set mapping path for demo files
+            original_mapping_path = os.environ.get("MAPPING_YAML_PATH")
+            if use_demo:
+                demo_mapping_path = BASE_DIR / "demo" / "demo_mapping.yaml"
+                os.environ["MAPPING_YAML_PATH"] = str(demo_mapping_path)
+            
+            try:
+                with st.spinner(spinner_text):
+                    api_result = create_run(
+                        payroll_bytes=payroll_bytes,
+                        payroll_filename=payroll_filename,
+                        rk_bytes=rk_bytes,
+                        rk_filename=rk_filename,
+                        plan_name=plan_name,
+                        plan_rules=plan_rules,
+                        payroll_vendor_hint=payroll_vendor_hint,
+                        rk_vendor_hint=rk_vendor_hint,
+                    )
+            finally:
+                # Restore original mapping path
+                if use_demo:
+                    if original_mapping_path:
+                        os.environ["MAPPING_YAML_PATH"] = original_mapping_path
+                    else:
+                        os.environ.pop("MAPPING_YAML_PATH", None)
 
             run_id = api_result.get("run_id")
             summary_dict = api_result.get("summary", {})
