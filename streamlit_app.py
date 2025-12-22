@@ -262,6 +262,59 @@ def check_password() -> bool:
     return st.session_state["password_correct"]
 
 
+def validate_recordkeeper_headers(rk_file) -> tuple:
+    """
+    Validate that the recordkeeper CSV contains expected amount fields.
+    
+    Returns:
+        (is_valid, error_message)
+    """
+    if rk_file is None:
+        return True, ""  # Will be caught by other validation
+    
+    try:
+        # Read only the header row
+        rk_file.seek(0)
+        header_line = rk_file.readline().decode('utf-8').strip()
+        rk_file.seek(0)  # Reset for later use
+        
+        # Parse CSV header (handle quoted fields)
+        import csv
+        reader = csv.reader([header_line])
+        headers = next(reader)
+        
+        # Normalize headers (lowercase, strip whitespace, remove special chars for comparison)
+        headers_normalized = [h.lower().strip().replace(" ", "_").replace("$", "").replace("-", "_") for h in headers]
+        
+        # Check for at least one of the expected amount fields
+        # Looking for: ee_deferral, ee_roth, loan_amount (or common variations)
+        # Common RK variations: ee_pretax, ee_roth, loan_contr, def_amount, roth_amount
+        expected_fields = [
+            "ee_deferral", "ee_pretax", "ee_roth", 
+            "loan_amount", "loan_contr", "loan_payment",
+            "def_amount", "roth_amount"  # Also accept canonical names
+        ]
+        
+        found = any(
+            any(field in h for h in headers_normalized)
+            for field in expected_fields
+        )
+        
+        if not found:
+            return False, (
+                "Recordkeeper file is missing expected amount fields "
+                "(ee_deferral, ee_roth, loan_amount). "
+                "You likely uploaded a payroll file in the recordkeeper slot. "
+                "Please upload a recordkeeper export."
+            )
+        
+        return True, ""
+    except Exception as e:
+        # If validation fails due to parsing error, allow it through
+        # (preflight will catch actual format issues)
+        return True, ""
+
+
 # ---------- Paths / Directories ----------
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR.parent / "data"
@@ -904,7 +957,12 @@ def render_reconciliation_tab():
 
     # ---------- Upload Section ----------
     st.header("1. Upload Files")
-
+    
+    # Demo files preset button
+    col_demo, col_upload = st.columns([1, 3])
+    with col_demo:
+        demo_button = st.button("📁 Use Demo Files", type="secondary", use_container_width=True)
+    
     col1, col2 = st.columns(2)
 
     with col1:
@@ -917,6 +975,70 @@ def render_reconciliation_tab():
 
     # Plan name input
     plan_name = st.text_input("Plan name", value="Demo Plan")
+    
+    # Handle demo button click - run directly
+    if demo_button:
+        # Set demo file paths in session state
+        repo_root = Path(__file__).resolve().parent
+        demo_payroll_path = repo_root / "data" / "raw" / "demo_broken_payroll.csv"
+        demo_rk_path = repo_root / "data" / "raw" / "demo_clean_rk.csv"
+        demo_mapping_path = repo_root / "mapping_example.yaml"
+        
+        if not demo_payroll_path.exists() or not demo_rk_path.exists():
+            st.error("Demo files not found. Please check that demo files exist in data/raw/")
+            st.stop()
+        
+        # Read demo files into bytes
+        with open(demo_payroll_path, "rb") as f:
+            payroll_bytes = f.read()
+        payroll_filename = demo_payroll_path.name
+        
+        with open(demo_rk_path, "rb") as f:
+            rk_bytes = f.read()
+        rk_filename = demo_rk_path.name
+        
+        # Validate recordkeeper headers
+        with open(demo_rk_path, "rb") as f:
+            is_valid, error_msg = validate_recordkeeper_headers(f)
+            if not is_valid:
+                st.error(error_msg)
+                st.stop()
+        
+        # Run directly with demo files
+        try:
+            spinner_text = "Running ProofLink analysis with demo files..." if USE_API_BACKEND else "Running ProofLink analysis with demo files..."
+            with st.spinner(spinner_text):
+                api_result = create_run(
+                    payroll_bytes=payroll_bytes,
+                    payroll_filename=payroll_filename,
+                    rk_bytes=rk_bytes,
+                    rk_filename=rk_filename,
+                    plan_name=plan_name,
+                    plan_rules=plan_rules,
+                    payroll_vendor_hint=payroll_vendor_hint,
+                    rk_vendor_hint=rk_vendor_hint,
+                )
+            
+            run_id = api_result.get("run_id")
+            summary_dict = api_result.get("summary", {})
+            status = api_result.get("status", "unknown")
+            
+            if not run_id:
+                st.error("Run did not return a run_id.")
+            else:
+                # Store run_id and summary in session state for later use
+                st.session_state["current_run_id"] = run_id
+                st.session_state["current_summary"] = summary_dict
+                st.session_state["current_status"] = status
+                st.success("Analysis completed with demo files.")
+        except requests.RequestException as e:
+            if USE_API_BACKEND:
+                st.error(f"Failed to contact ProofLink API: {e}")
+            else:
+                st.error(f"Failed to run ProofLink engine: {e}")
+        except Exception as e:
+            st.error(f"Error running ProofLink analysis: {e}")
+            st.exception(e)
 
     st.markdown("---")
 
@@ -993,18 +1115,30 @@ def render_reconciliation_tab():
 
     # ---------- Run Reconciliation ----------
     if run_button:
+        # Use uploaded files
         if not payroll_file or not rk_file:
             st.error("Please upload BOTH a payroll CSV and a recordkeeper CSV.")
             return
+        
+        # Validate recordkeeper headers before running
+        is_valid, error_msg = validate_recordkeeper_headers(rk_file)
+        if not is_valid:
+            st.error(error_msg)
+            st.stop()
+        
+        payroll_bytes = payroll_file.getvalue()
+        payroll_filename = payroll_file.name
+        rk_bytes = rk_file.getvalue()
+        rk_filename = rk_file.name
 
         try:
             spinner_text = "Running ProofLink analysis via API..." if USE_API_BACKEND else "Running ProofLink analysis..."
             with st.spinner(spinner_text):
                 api_result = create_run(
-                    payroll_bytes=payroll_file.getvalue(),
-                    payroll_filename=payroll_file.name,
-                    rk_bytes=rk_file.getvalue(),
-                    rk_filename=rk_file.name,
+                    payroll_bytes=payroll_bytes,
+                    payroll_filename=payroll_filename,
+                    rk_bytes=rk_bytes,
+                    rk_filename=rk_filename,
                     plan_name=plan_name,
                     plan_rules=plan_rules,
                     payroll_vendor_hint=payroll_vendor_hint,
