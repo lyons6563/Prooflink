@@ -37,6 +37,7 @@ def build_manifest(run_context: RunContext) -> Dict[str, Any]:
             "results_hash": None,
             "violations_hash": None,
         },
+        "evidence_pack_zip_hash": None,
     }
 
 
@@ -157,5 +158,35 @@ if __name__ == "__main__":
     output_dir = repo_root / "tmp_run_outputs" / "sample_run"
     manifest_path = write_manifest(manifest, str(output_dir))
     print(f"Manifest written to: {manifest_path.absolute()}")
+    print()
+    
+    # Create dummy results.csv in a temp location first, then copy to output_dir
+    temp_dir = repo_root / "tmp_run_outputs" / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_results_file = temp_dir / "results.csv"
+    temp_results_file.write_text("employee_id,pay_date,def_amount,status\n12345,2025-01-15,100.00,matched\n", encoding='utf-8')
+    print(f"Created dummy results.csv: {temp_results_file}")
+    print()
+    
+    # Build evidence pack
+    from .evidence_pack import build_evidence_pack
+    manifest = build_evidence_pack(
+        run_id=run_context.run_id,
+        output_dir=str(output_dir),
+        manifest=manifest,
+        results_path=str(temp_results_file),
+        violations_path=None
+    )
+    
+    print("Final manifest after building evidence pack:")
+    print(json.dumps(manifest, indent=2))
+    print()
+    
+    zip_filename = f"evidence_pack_{run_context.run_id}.zip"
+    zip_path = output_dir.parent / zip_filename
+    if zip_path.exists():
+        print(f"Evidence pack ZIP created: {zip_path.absolute()}")
+        print(f"ZIP hash: {manifest.get('evidence_pack_zip_hash', 'N/A')}")
+    
     print("\nSelf-check complete.")
 
