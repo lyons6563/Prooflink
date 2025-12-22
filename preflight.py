@@ -412,7 +412,7 @@ def print_preflight_report(report: Dict[str, Any]) -> None:
             print(f"  Recordkeeper: {', '.join(report['missing_fields']['recordkeeper'])}")
         print()
     else:
-        print("✓ All required fields present\n")
+        print("[OK] All required fields present\n")
     
     # Mapped fields
     print("MAPPED FIELDS:")
@@ -451,7 +451,7 @@ def print_preflight_report(report: Dict[str, Any]) -> None:
             print(f"  - {warning}")
         print()
     else:
-        print("✓ No warnings\n")
+        print("[OK] No warnings\n")
 
 
 if __name__ == "__main__":
@@ -511,3 +511,4 @@ if __name__ == "__main__":
     
     if not safe:
         sys.exit(1)
+
