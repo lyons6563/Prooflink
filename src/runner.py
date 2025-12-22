@@ -8,6 +8,7 @@ engine and produces a frozen Evidence Pack with integrity hashing.
 from pathlib import Path
 from typing import Optional
 import sys
+import argparse
 
 # Ensure repo root is in path for both execution modes (python -m src.runner and python src/runner.py)
 _repo_root = Path(__file__).resolve().parent.parent
@@ -129,29 +130,82 @@ def run_evidence_pack(
 
 
 if __name__ == "__main__":
-    """Smoke test: run with demo files if available."""
-    print("=== Evidence Pack Runner Smoke Test ===\n")
+    """CLI entrypoint for Evidence Pack generation."""
+    parser = argparse.ArgumentParser(
+        description="Generate Evidence Pack ZIP from reconciliation inputs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use provided file paths
+  python -m src.runner demo/demo_payroll.csv demo/demo_recordkeeper.csv demo/demo_mapping.yaml
+  
+  # Use default demo files (if available)
+  python -m src.runner
+        """
+    )
+    
+    parser.add_argument(
+        "payroll_csv_path",
+        nargs="?",
+        help="Path to payroll CSV file (default: data/raw/demo_broken_payroll.csv)"
+    )
+    parser.add_argument(
+        "recordkeeper_csv_path",
+        nargs="?",
+        help="Path to recordkeeper CSV file (default: data/raw/demo_clean_rk.csv)"
+    )
+    parser.add_argument(
+        "mapping_yaml_path",
+        nargs="?",
+        help="Path to mapping YAML file (default: mapping_example.yaml)"
+    )
+    
+    args = parser.parse_args()
     
     repo_root = Path(__file__).resolve().parent.parent
     
-    # Try to use demo paths
-    payroll_path = repo_root / "data" / "raw" / "demo_broken_payroll.csv"
-    recordkeeper_path = repo_root / "data" / "raw" / "demo_clean_rk.csv"
-    mapping_path = repo_root / "mapping_example.yaml"
+    # Use provided arguments or fall back to defaults
+    # Priority: CLI arguments > defaults
+    if args.payroll_csv_path is not None:
+        payroll_path = Path(args.payroll_csv_path)
+        if not payroll_path.is_absolute():
+            payroll_path = repo_root / payroll_path
+    else:
+        payroll_path = repo_root / "data" / "raw" / "demo_broken_payroll.csv"
     
-    # Convert to strings or None if files don't exist
-    payroll_str = str(payroll_path) if payroll_path.exists() else None
-    rk_str = str(recordkeeper_path) if recordkeeper_path.exists() else None
-    mapping_str = str(mapping_path) if mapping_path.exists() else None
+    if args.recordkeeper_csv_path is not None:
+        recordkeeper_path = Path(args.recordkeeper_csv_path)
+        if not recordkeeper_path.is_absolute():
+            recordkeeper_path = repo_root / recordkeeper_path
+    else:
+        recordkeeper_path = repo_root / "data" / "raw" / "demo_clean_rk.csv"
     
-    if not all([payroll_str, rk_str, mapping_str]):
-        print("Error: Demo files not found. Expected:")
-        print(f"  Payroll: {payroll_path}")
-        print(f"  Recordkeeper: {recordkeeper_path}")
-        print(f"  Mapping: {mapping_path}")
-        print("\nPlease provide valid file paths.")
+    if args.mapping_yaml_path is not None:
+        mapping_path = Path(args.mapping_yaml_path)
+        if not mapping_path.is_absolute():
+            mapping_path = repo_root / mapping_path
+    else:
+        mapping_path = repo_root / "mapping_example.yaml"
+    
+    # Validate files exist
+    if not payroll_path.exists():
+        print(f"Error: Payroll file not found: {payroll_path}")
         exit(1)
     
+    if not recordkeeper_path.exists():
+        print(f"Error: Recordkeeper file not found: {recordkeeper_path}")
+        exit(1)
+    
+    if not mapping_path.exists():
+        print(f"Error: Mapping file not found: {mapping_path}")
+        exit(1)
+    
+    # Convert to absolute paths for consistent output
+    payroll_str = str(payroll_path.resolve())
+    rk_str = str(recordkeeper_path.resolve())
+    mapping_str = str(mapping_path.resolve())
+    
+    print("=== Evidence Pack Runner ===\n")
     print(f"Payroll file: {payroll_str}")
     print(f"Recordkeeper file: {rk_str}")
     print(f"Mapping file: {mapping_str}")
@@ -170,7 +224,7 @@ if __name__ == "__main__":
         print(f"Evidence Pack ZIP: {result['evidence_pack_zip_path']}")
         print(f"ZIP Hash: {result['manifest'].get('evidence_pack_zip_hash', 'N/A')}")
         print()
-        print("Smoke test complete.")
+        print("Evidence Pack generation complete.")
         
     except Exception as e:
         print(f"Error during Evidence Pack generation: {e}")
