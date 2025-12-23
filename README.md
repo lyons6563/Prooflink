@@ -40,13 +40,15 @@ Evidence Pack v2 is intended for use by auditors, compliance teams, and internal
 
 ## How to run
 
-Run the Evidence Pack generator with payroll, recordkeeper, and mapping files:
+Run preflight validation with payroll, recordkeeper, and mapping files:
 
 ```bash
-python -m src.runner demo/demo_payroll.csv demo/demo_recordkeeper.csv demo/demo_mapping.yaml
+python preflight.py inputs/payroll.csv inputs/recordkeeper.csv inputs/mapping_demo.yaml
 ```
 
-The command produces an Evidence Pack ZIP file in the `tmp_run_outputs` directory.
+Note: `mapping_example.yaml` is documentation-only and may not pass preflight.
+
+The command validates inputs and reports whether the run is safe to proceed.
 
 ## Example output
 

@@ -1,0 +1,42 @@
+payroll:
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "employee_id"
+  
+  pay_date:
+    canonical: "pay_date"
+    examples:
+      - "pay_date"
+  
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "payroll_pretax"
+  
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "payroll_roth"
+
+recordkeeper:
+  employee_id:
+    canonical: "employee_id"
+    examples:
+      - "employee_id"
+  
+  deposit_date:
+    canonical: "deposit_date"
+    examples:
+      - "record_date"
+  
+  ee_deferral:
+    canonical: "EE Deferral $"
+    examples:
+      - "def_amount"
+  
+  ee_roth:
+    canonical: "EE Roth $"
+    examples:
+      - "roth_amount"
+
