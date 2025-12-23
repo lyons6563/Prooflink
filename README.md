@@ -50,6 +50,20 @@ Note: `mapping_example.yaml` is documentation-only and may not pass preflight.
 
 The command validates inputs and reports whether the run is safe to proceed.
 
+## Quick Demo (One Command)
+
+Run preflight validation:
+
+```powershell
+.\run_demo.ps1
+```
+
+View the most recent run output:
+
+```powershell
+.\show_last_output.ps1
+```
+
 ## Example output
 
 The Evidence Pack ZIP (`evidence_pack_{run_id}.zip`) contains:
