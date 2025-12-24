@@ -1,0 +1,42 @@
+# SECURE 2.0 Preflight Checker - ADP Workforce Now Configuration Template
+# Copy this file and customize for your environment
+#
+# Example usage:
+#   cp secure20_preflight_config.adp_wfn.example.yaml my_adp_config.yaml
+#   # Edit my_adp_config.yaml with your settings
+#   python secure20_preflight.py --payroll adp_export.csv --config my_adp_config.yaml
+
+# HCE Threshold Configuration
+hce_threshold:
+  current_year: 2024  # Calendar year being analyzed (update annually)
+  compensation_limit: 150000  # HCE compensation threshold in dollars
+  # Note: For 2024, the HCE threshold is $150,000
+  # Update this value each year based on IRS guidance
+
+# Catch-up Contribution Rules
+catch_up:
+  age_threshold: 50  # Minimum age for catch-up contributions (typically 50)
+  roth_only_risk_year: 2024  # Year when Roth-only catch-up restriction begins for HCEs
+  # Note: SECURE 2.0 requires HCEs age 50+ to use Roth catch-up starting in 2024
+  # Set this to the year your plan begins enforcing the Roth-only rule
+
+# Annualization Settings
+annualization:
+  method: "gross_or_ytd"  # Options: "gross", "ytd", "gross_or_ytd"
+  # 
+  # "gross_or_ytd" (RECOMMENDED): 
+  #   - Use YTD gross pay if available and non-zero
+  #   - Otherwise, annualize from gross pay period amount
+  #   - Best for ADP WFN exports that include both fields
+  #
+  # "ytd": 
+  #   - Always use YTD projection when available
+  #   - Use only if your export reliably includes accurate YTD data
+  #
+  # "gross": 
+  #   - Always annualize from gross pay period amount
+  #   - Use if YTD data is unreliable or missing
+  #
+  # For ADP WFN: "gross_or_ytd" is recommended since exports typically
+  # include both gross_pay and ytd_gross_pay columns
+
