@@ -1,0 +1,10 @@
+employee_id,employee_name,gross_pay,ytd_gross_pay,pay_period_start,pay_period_end,catch_up_contribution,catch_up_type
+EMP001,John Smith,5000.00,60000.00,2024-01-01,2024-01-15,500.00,Traditional
+EMP002,Jane Doe,6250.00,75000.00,2024-01-01,2024-01-15,750.00,Roth
+EMP003,Bob Johnson,8333.33,100000.00,2024-01-01,2024-01-15,1000.00,Traditional
+EMP004,Alice Williams,10416.67,125000.00,2024-01-01,2024-01-15,1250.00,Roth
+EMP005,Charlie Brown,12500.00,150000.00,2024-01-01,2024-01-15,1500.00,Roth
+EMP006,Diana Prince,5208.33,62500.00,2024-01-01,2024-01-15,,
+EMP007,Frank Miller,4166.67,50000.00,2024-01-01,2024-01-15,,
+EMP008,Grace Lee,3125.00,37500.00,2024-01-01,2024-01-15,,
+

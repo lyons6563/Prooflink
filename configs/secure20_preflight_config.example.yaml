@@ -1,0 +1,20 @@
+# SECURE 2.0 Preflight Checker - Example Configuration
+# Copy this file and customize for your environment
+
+# HCE Threshold Configuration
+hce_threshold:
+  current_year: 2024  # Calendar year being analyzed
+  compensation_limit: 150000  # HCE compensation threshold (dollars)
+
+# Catch-up Contribution Rules
+catch_up:
+  age_threshold: 50  # Minimum age for catch-up contributions
+  roth_only_risk_year: 2024  # Year when Roth-only catch-up restriction begins
+
+# Annualization Settings
+annualization:
+  method: "gross_or_ytd"  # Options: "gross", "ytd", "gross_or_ytd"
+  # "gross_or_ytd": Use YTD if available, otherwise annualize gross pay
+  # "ytd": Always use YTD projection when available
+  # "gross": Always annualize from gross pay period amount
+
