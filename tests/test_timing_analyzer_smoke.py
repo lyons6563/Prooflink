@@ -18,13 +18,6 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from main import run_reconciliation  # noqa: E402
-
-
-# Ensure src root is on PYTHONPATH
-ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
 from contribution_timing_analyzer_v2 import compute_late_contributions  # noqa: E402
 
 
