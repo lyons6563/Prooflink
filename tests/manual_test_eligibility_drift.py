@@ -1,14 +1,16 @@
 import os
 import sys
 import pandas as pd
+from pathlib import Path
 
-# Make sure parent directory (where eligibility_drift.py lives) is on the path
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # dev/src
-sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from eligibility_drift import detect_eligibility_drift
 
-PAYROLL_PATH = os.path.join(BASE_DIR, "data", "raw", "elig_test_payroll.csv")
+# data/demo/ is the canonical location for test fixtures
+PAYROLL_PATH = BASE_DIR / "data" / "demo" / "elig_test_payroll.csv"
 
 
 def main():
@@ -23,6 +25,24 @@ def main():
     if not drift_df.empty:
         print("Drift sample:")
         print(drift_df.head().to_string(index=False))
+
+
+# ---------------------------------------------------------------------------
+# pytest entry point
+# ---------------------------------------------------------------------------
+
+import pytest
+
+
+@pytest.mark.skipif(
+    not PAYROLL_PATH.exists(),
+    reason="elig_test_payroll.csv not present in data/demo/",
+)
+def test_eligibility_drift_runs():
+    """detect_eligibility_drift executes without error and returns a DataFrame."""
+    df = pd.read_csv(PAYROLL_PATH)
+    drift_df = detect_eligibility_drift(df, grace_days=0)
+    assert isinstance(drift_df, pd.DataFrame)
 
 
 if __name__ == "__main__":
