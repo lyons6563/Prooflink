@@ -1089,29 +1089,6 @@ def run_prooflink_engine(
     )
 
 
-from datetime import datetime
-import hashlib
-import json
-import numpy as np
-import zipfile
-
-import pandas as pd
-
-from pathlib import Path
-
-
-
-
-from pathlib import Path
-
-from pathlib import Path
-from datetime import datetime
-import hashlib
-import json
-import numpy as np
-
-import pandas as pd
-
 def run_reconciliation(
     payroll_csv: str,
     rk_csv: str,
@@ -1658,12 +1635,7 @@ def run_reconciliation(
     results["payroll_processed_df"] = p
 
     return results
-   
-    print("\nRun complete. Key outputs:")
-    for k, v in results.items():
-        print(f"  {k}: {v}")
 
-    return results
 
 def build_evidence_pack(results: dict) -> Path:
     """
@@ -1711,31 +1683,6 @@ def build_evidence_pack(results: dict) -> Path:
 
     print(f"Evidence pack written to: {zip_path}")
     return zip_path
-
-    # =========================
-    # Return paths for Streamlit
-    # =========================
-    results = {
-        "reconciliation_report": str(output_dir_path / "reconciliation_report.xlsx"),
-        "deferral_mismatches": str(output_dir_path / "deferral_mismatches.csv"),
-        "loan_mismatches": str(output_dir_path / "loan_mismatches.csv"),
-        "only_in_payroll": str(output_dir_path / "only_in_payroll_deferrals.csv"),
-        "only_in_recordkeeper": str(output_dir_path / "only_in_recordkeeper_deferrals.csv"),
-        "late_deferrals": str(output_dir_path / "late_deferrals_contributions.csv"),
-        "late_loans": str(output_dir_path / "late_loans_contributions.csv"),
-        "manifest": str(manifest_path),
-    }
-
-    # Build consolidated evidence pack ZIP
-    evidence_zip = build_evidence_pack(results)
-    results["evidence_pack"] = str(evidence_zip)
-
-    print("\nRun complete. Key outputs:")
-    for k, v in results.items():
-        print(f"  {k}: {v}")
-
-    return results
-
 
 
 # =========================
