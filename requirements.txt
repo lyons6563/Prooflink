@@ -1,4 +1,4 @@
-sstreamlit
+streamlit
 pandas
 numpy
 python-dateutil
