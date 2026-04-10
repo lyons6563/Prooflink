@@ -1,84 +1,91 @@
-A deterministic evidence engine for payroll ↔ recordkeeper reconciliation.
+# Prooflink
 
-This repository corresponds to the "Evidence Pack v2" packaged implementation.
+Deterministic reconciliation engine for payroll vs. recordkeeper data in 401(k) plans. Produces an integrity-verified Evidence Pack for use in audit workpapers.
 
-## What this is
+## What it does
 
-Evidence Pack v2 is a deterministic reconciliation engine that compares payroll and recordkeeper data to identify discrepancies, timing violations, and compliance issues. It produces an immutable Evidence Pack ZIP archive containing reconciliation results with cryptographic integrity verification.
+Prooflink ingests payroll and recordkeeper CSV exports, normalizes them across vendor formats, and runs the following checks:
 
-## What this is not
+- **Deferral reconciliation** — compares employee deferral amounts (pre-tax + Roth) between payroll and recordkeeper, flags mismatches and one-sided rows
+- **Loan reconciliation** — same comparison for loan repayment transactions
+- **Contribution timing** — calculates business-day lag between pay date and deposit date; flags late contributions against a configurable threshold
+- **Secure 2.0 catch-up compliance** — identifies HCEs age 50+ with pre-tax catch-up contributions where Roth is required
+- **Eligibility drift** — detects employees whose eligibility status changed mid-period
+- **402(g) excess deferrals** — checks employee deferrals against annual IRS limits for the inferred plan year
+- **Employer match reasonableness** — compares actual match amounts to the plan's formula
 
-- Not a legal opinion, legal advice, or legal interpretation system
-- Not a compliance certification or audit endorsement tool
-- Not a fiduciary judgment system
-- Not a system of record for source data
-- Not an audit endorsement or audit approval system
+Outputs go to a timestamped run directory. All CSVs and the Excel report are bundled into a ZIP with a SHA-256 manifest so the evidence pack can be independently verified without database access.
 
-This system performs rule-based analysis only and makes no compliance, legal, or fiduciary assertions.
+## Stack
 
-## Core capabilities
+- Python 3.10+
+- pandas, openpyxl, PyYAML
+- FastAPI (API layer)
+- Streamlit (UI)
+- pytest
 
-The engine performs the following reconciliation checks:
+## Layout
 
-- Deferral reconciliation: Compares deferral amounts between payroll and recordkeeper data
-- Loan reconciliation: Compares loan transactions between payroll and recordkeeper data
-- Timing analysis: Identifies late deferrals and contributions based on configured thresholds
-- Secure 2.0 catch-up analysis: Analyzes catch-up contribution compliance (if applicable)
-- Eligibility drift analysis: Detects changes in employee eligibility status
-- Vendor detection: Identifies payroll and recordkeeper vendors from data patterns
-
-All analysis is deterministic and rule-based. Outputs include detailed mismatch reports, violation summaries, and integrity-verified Evidence Pack archives.
-
-## Intended use
-
-Evidence Pack v2 is intended for use by auditors, compliance teams, and internal review teams as supporting documentation in audit and review processes. Evidence Packs can be included in audit workpapers to document:
-
-- What data was analyzed during a specific period
-- What reconciliation rules were applied
-- What discrepancies were identified
-- The integrity and immutability of the analysis record
-
-## How to run
-
-Run preflight validation with payroll, recordkeeper, and mapping files:
-
-```bash
-python preflight.py inputs/payroll.csv inputs/recordkeeper.csv inputs/mapping_demo.yaml
+```
+main.py                         # core reconciliation engine + evidence pack builder
+streamlit_app.py                # Streamlit UI
+api.py                          # FastAPI endpoints
+preflight.py                    # input validation (run before engine)
+vendor_detection.py             # signature-based vendor identification
+vendors.py                      # vendor column-map definitions
+contribution_timing_analyzer_v2.py
+secure20_catchup_analyzer.py
+eligibility_drift_analyzer.py
+comp_402g_analyzer.py
+match_reasonableness_analyzer.py
+plan_exception_summary.py
+tests/                          # pytest test suite
+inputs/                         # place payroll + RK CSVs here
+data/processed/                 # engine output (overwritten each run)
+proofs/                         # proof manifests (append-only)
 ```
 
-Note: `mapping_example.yaml` is documentation-only and may not pass preflight.
+## Running
 
-The command validates inputs and reports whether the run is safe to proceed.
+Validate inputs first:
 
-## Quick Demo (One Command)
+```bash
+python preflight.py inputs/payroll.csv inputs/recordkeeper.csv inputs/mapping_example.yaml
+```
 
-Run preflight validation:
+Then run via CLI:
+
+```bash
+python main.py --payroll_csv inputs/payroll.csv --rk_csv inputs/recordkeeper.csv --plan_name "Acme 401k"
+```
+
+Or start the Streamlit UI:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Windows demo:
 
 ```powershell
 .\run_demo.ps1
 ```
 
-View the most recent run output:
+## Evidence Pack
 
-```powershell
-.\show_last_output.ps1
+Each run produces `prooflink_evidence_pack.zip` under `data/processed/` containing:
+
+- `reconciliation_report.xlsx` (summary + detail sheets)
+- `deferral_mismatches.csv`
+- `loan_mismatches.csv`
+- `late_deferrals_contributions.csv`
+- `secure20_exceptions.csv` (if any)
+- `proof_manifest_*.json` with SHA-256 hashes of all outputs
+
+The manifest can be verified offline with `verify_proof.py` — no database or network required.
+
+## Tests
+
+```bash
+pytest tests/ -v
 ```
-
-## Example output
-
-The Evidence Pack ZIP (`evidence_pack_{run_id}.zip`) contains:
-
-- `manifest.json`
-- `audit_summary.txt`
-- `README.txt`
-- `results.csv` (if available)
-- `violations.csv` (if available)
-
-## IP & licensing
-
-To be verified by buyer.
-
-## Why this exists
-
-Evidence Pack v2 provides a deterministic, verifiable record of reconciliation analysis for audit and compliance purposes. The cryptographic integrity features enable independent verification that Evidence Pack contents have not been modified since creation.
-
