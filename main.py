@@ -298,28 +298,6 @@ def run_reconciliation_with_summary(
         }
 
 
-def _find_timing_summary(run_root: str) -> Optional[Dict[str, Any]]:
-    """
-    Search for timing_summary.json under the given run_root directory.
-    Returns the parsed dict if found and valid, otherwise None.
-    """
-    if not run_root or not os.path.isdir(run_root):
-        return None
-
-    for root, dirs, files in os.walk(run_root):
-        if "timing_summary.json" in files:
-            timing_path = os.path.join(root, "timing_summary.json")
-            try:
-                with open(timing_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-            except Exception:
-                return None
-
-    return None
-
-
 def _infer_plan_year_from_payroll(payroll_df: pd.DataFrame) -> Optional[int]:
     """
     Infer plan year from payroll dataframe by finding the latest year in pay_date column.
@@ -2104,14 +2082,6 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_csv(name: str) -> pd.DataFrame:
-    path = DATA_RAW / name
-    if not path.exists():
-        raise FileNotFoundError(f"Missing expected file: {path}")
-    df = pd.read_csv(path)
-    return normalize_column_names(df)
-
-
 def infer_column_mapping(df: pd.DataFrame, logical_map: dict[str, list[str]]) -> dict[str, str]:
     """
     Given a DataFrame and a dict of logical_name -> list of possible column names,
@@ -2195,26 +2165,6 @@ def infer_vendor_mapping(
         mapping.setdefault(logical, actual)
 
     return mapping
-
-def detect_vendor(df: pd.DataFrame, signatures: dict[str, list[str]]) -> str | None:
-    """
-    Try to detect a vendor by checking if all signature patterns appear
-    in the dataframe's columns (case-insensitive, substring match).
-    Returns the vendor name or None if no match.
-    """
-    cols = [c.lower().strip() for c in df.columns]
-
-    for vendor, patterns in signatures.items():
-        match_all = True
-        for pattern in patterns:
-            pattern = pattern.lower().strip()
-            if not any(pattern in col for col in cols):
-                match_all = False
-                break
-        if match_all:
-            return vendor
-
-    return None
 
 def parse_amount(series: pd.Series) -> pd.Series:
     """
@@ -2901,23 +2851,6 @@ def generate_excel_report():
 
     return outputs
 
-def main():
-    print("Running Prooflink reconciliation...")
-    reconcile_payroll_vs_recordkeeper()
-    outputs = generate_excel_report()
-    cfg = load_config()
-
-    payroll_path = DATA_RAW / cfg.get("payroll_file", PAYROLL_FILE)
-    rk_path = DATA_RAW / cfg.get("recordkeeper_file", RECORDKEEPER_FILE)
-
-    write_proof_manifest(
-        payroll_file=payroll_path,
-        rk_file=rk_path,
-        cfg=cfg,
-        outputs=outputs,
-    )
-
-
 if __name__ == "__main__":
     import sys
     import argparse
@@ -2971,7 +2904,4 @@ if __name__ == "__main__":
     else:
         # No CLI args: use config-based wrapper (legacy behavior)
         reconcile_payroll_vs_recordkeeper()
-
-
-    
 
