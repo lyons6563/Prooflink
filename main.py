@@ -1103,18 +1103,40 @@ def run_reconciliation(
     safe, preflight_report = run_preflight(payroll_csv, rk_csv, mapping_yaml_path)
     
     if not safe:
+        lines = ["Reconciliation execution blocked: preflight checks failed."]
+
+        blocked_files = preflight_report.get('blocked_files', [])
+        if blocked_files:
+            for file_type, file_path in blocked_files:
+                lines.append(f"  File not found ({file_type}): {file_path}")
+
+        missing_mapped = preflight_report.get('missing_mapped_headers', {})
+        if missing_mapped.get('payroll'):
+            lines.append(f"  Unmappable payroll headers: {', '.join(missing_mapped['payroll'])}")
+        if missing_mapped.get('recordkeeper'):
+            lines.append(f"  Unmappable RK headers: {', '.join(missing_mapped['recordkeeper'])}")
+
         missing_payroll = preflight_report.get('missing_fields', {}).get('payroll', [])
         missing_rk = preflight_report.get('missing_fields', {}).get('recordkeeper', [])
+        if missing_payroll:
+            lines.append(f"  Missing payroll fields: {', '.join(missing_payroll)}")
+        if missing_rk:
+            lines.append(f"  Missing RK fields: {', '.join(missing_rk)}")
+
+        for side in ('payroll', 'recordkeeper'):
+            if preflight_report.get('join_key_not_mapped', {}).get(side):
+                lines.append(f"  {side}: employee_id could not be mapped")
+            if preflight_report.get('join_key_empty_file', {}).get(side):
+                lines.append(f"  {side}: file has 0 rows")
+
         warnings = preflight_report.get('warnings', [])
-        
-        error_msg = (
-            "Reconciliation execution blocked: preflight checks failed.\n"
-            f"Missing payroll fields: {', '.join(missing_payroll) if missing_payroll else 'none'}\n"
-            f"Missing recordkeeper fields: {', '.join(missing_rk) if missing_rk else 'none'}\n"
-            f"Warnings: {len(warnings)} issue(s) detected.\n"
-            f"Full preflight report available in preflight.py output. Run: python preflight.py {payroll_csv} {rk_csv} {mapping_yaml_path}"
+        for w in warnings:
+            lines.append(f"  Warning: {w}")
+
+        lines.append(
+            f"Run `python preflight.py {payroll_csv} {rk_csv} {mapping_yaml_path}` for the full report."
         )
-        raise RuntimeError(error_msg)
+        raise RuntimeError("\n".join(lines))
 
     # Resolve and prepare directories
     output_dir_path = Path(output_dir)

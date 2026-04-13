@@ -200,57 +200,6 @@ def run_preflight(
     report['mapped_fields']['payroll'] = payroll_mapped
     report['mapped_fields']['recordkeeper'] = rk_mapped
     
-    # Strict validation: verify all source headers referenced in mapping exist in CSV headers
-    # For each canonical field in the mapping, check if its example headers exist in the CSV
-    # Collect headers that are referenced in the mapping but don't exist in the CSV
-    missing_payroll_headers = []
-    missing_rk_headers = []
-    
-    # Normalize CSV headers for comparison
-    normalized_payroll_headers = {normalize_column_name(h) for h in payroll_headers}
-    normalized_rk_headers = {normalize_column_name(h) for h in rk_headers}
-    
-    # Check payroll: for each canonical field in mapping, verify at least one example header exists
-    payroll_file_section = mapping_data.get('payroll', {})
-    for field_key, field_data in payroll_file_section.items():
-        if isinstance(field_data, dict) and 'examples' in field_data:
-            examples = field_data.get('examples', [])
-            if isinstance(examples, list) and examples:
-                # Check if any example (normalized) exists in CSV headers
-                example_exists = any(
-                    normalize_column_name(example) in normalized_payroll_headers
-                    for example in examples
-                )
-                # If no example exists, this field cannot be mapped
-                # Report the first example as the missing header (using original form)
-                if not example_exists:
-                    missing_payroll_headers.append(examples[0])
-    
-    # Check recordkeeper: same logic
-    rk_file_section = mapping_data.get('recordkeeper', {})
-    for field_key, field_data in rk_file_section.items():
-        if isinstance(field_data, dict) and 'examples' in field_data:
-            examples = field_data.get('examples', [])
-            if isinstance(examples, list) and examples:
-                example_exists = any(
-                    normalize_column_name(example) in normalized_rk_headers
-                    for example in examples
-                )
-                if not example_exists:
-                    missing_rk_headers.append(examples[0])
-    
-    # Remove duplicates and sort for deterministic output
-    missing_payroll_headers = sorted(list(set(missing_payroll_headers)))
-    missing_rk_headers = sorted(list(set(missing_rk_headers)))
-    
-    # If any headers are missing, block the run
-    if missing_payroll_headers or missing_rk_headers:
-        report['missing_mapped_headers'] = {
-            'payroll': missing_payroll_headers,
-            'recordkeeper': missing_rk_headers
-        }
-        return (False, report)
-    
     # Check required fields
     # Payroll: employee_id required
     if 'employee_id' not in payroll_mapped:

@@ -3,7 +3,7 @@ import json
 import os
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
@@ -994,7 +994,7 @@ def run_timing_analysis(
         "late_rows": num_late,
         "missing_deposits": num_missing,
         "risk_level": timing_risk,
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_hash": None,
     }
     

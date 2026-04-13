@@ -52,6 +52,7 @@ payroll:
       - "Loan Repay $"
       - "Loan Payment"
       - "Loan Repayment"
+      - "loan_amount"
   
   # Optional Fields - Secure 2.0 Compliance
   is_hce:
@@ -133,6 +134,7 @@ recordkeeper:
       - "Loan Contr"
       - "Loan Contribution"
       - "Loan Payment"
+      - "loan_amount"
 
 # Example Complete Mappings
 # These show how a complete source file header would map to canonical fields
