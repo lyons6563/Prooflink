@@ -15,14 +15,36 @@ from vendors import (
     detect_vendor_with_confidence,
 )
 
+UNKNOWN_VENDOR = "Unknown / Generic"
+
 
 @dataclass
 class VendorDetectionResult:
     """Result of vendor detection for both payroll and recordkeeper."""
+
     payroll_vendor: str
     payroll_confidence: float
     rk_vendor: str
     rk_confidence: float
+
+
+def _detect_single_vendor(
+    df: Optional[pd.DataFrame],
+    signatures: dict,
+    vendor_hint: Optional[str],
+) -> tuple[str, float]:
+    """Detect a single vendor safely and return normalized defaults on failures."""
+    if df is None or df.empty:
+        # Honor explicit hints even when files are empty, with zero confidence.
+        return (vendor_hint or UNKNOWN_VENDOR), 0.0
+
+    vendor, confidence = detect_vendor_with_confidence(df, signatures, vendor_hint)
+
+    # Preserve hint override behavior while still returning the computed confidence.
+    if vendor_hint:
+        vendor = vendor_hint
+
+    return vendor or UNKNOWN_VENDOR, confidence
 
 
 def detect_vendors(
@@ -54,49 +76,26 @@ def detect_vendors(
 
     Defaults:
         If detection fails or inputs are empty:
-        - payroll_vendor = "Unknown / Generic"
-        - rk_vendor = "Unknown / Generic"
-        - confidences = 0.0
+        - vendor = "Unknown / Generic"
+        - confidence = 0.0
     """
-    # Handle empty dataframes
-    if payroll_df is None or payroll_df.empty:
-        return VendorDetectionResult(
-            payroll_vendor="Unknown / Generic",
-            payroll_confidence=0.0,
-            rk_vendor="Unknown / Generic",
-            rk_confidence=0.0,
-        )
-    
-    if rk_df is None or rk_df.empty:
-        return VendorDetectionResult(
-            payroll_vendor="Unknown / Generic",
-            payroll_confidence=0.0,
-            rk_vendor="Unknown / Generic",
-            rk_confidence=0.0,
-        )
+    # Backwards compatible signature; kwargs intentionally ignored.
+    _ = kwargs
 
-    # Run detection with confidence scoring
-    payroll_vendor, payroll_confidence = detect_vendor_with_confidence(
-        payroll_df, PAYROLL_VENDOR_SIGNATURES, payroll_vendor_hint
+    payroll_vendor, payroll_confidence = _detect_single_vendor(
+        df=payroll_df,
+        signatures=PAYROLL_VENDOR_SIGNATURES,
+        vendor_hint=payroll_vendor_hint,
     )
-    rk_vendor, rk_confidence = detect_vendor_with_confidence(
-        rk_df, RK_VENDOR_SIGNATURES, rk_vendor_hint
+    rk_vendor, rk_confidence = _detect_single_vendor(
+        df=rk_df,
+        signatures=RK_VENDOR_SIGNATURES,
+        vendor_hint=rk_vendor_hint,
     )
-    
-    # If hint provided, use it (confidence still calculated)
-    if payroll_vendor_hint:
-        payroll_vendor = payroll_vendor_hint
-    if rk_vendor_hint:
-        rk_vendor = rk_vendor_hint
-
-    # Apply defaults for None values (same as print statements)
-    final_payroll_vendor = payroll_vendor or "Unknown / Generic"
-    final_rk_vendor = rk_vendor or "Unknown / Generic"
 
     return VendorDetectionResult(
-        payroll_vendor=final_payroll_vendor,
+        payroll_vendor=payroll_vendor,
         payroll_confidence=payroll_confidence,
-        rk_vendor=final_rk_vendor,
+        rk_vendor=rk_vendor,
         rk_confidence=rk_confidence,
     )
-
