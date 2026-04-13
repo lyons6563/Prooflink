@@ -1,0 +1,3 @@
+batch_id,payroll_file,rk_file,output_prefix
+B001,data/raw/payroll_01.csv,data/raw/rk_01.csv,data/outputs/batch/B001_
+B002,data/raw/payroll_02.csv,data/raw/rk_02.csv,data/outputs/batch/B002_

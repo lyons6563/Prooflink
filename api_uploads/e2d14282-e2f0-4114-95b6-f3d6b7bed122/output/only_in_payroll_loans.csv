@@ -1,0 +1,4 @@
+employee_id,amount_payroll,pay_date,amount_rk,_merge
+E2000,0.0,2025-01-03,,left_only
+E2001,0.0,2025-02-01,,left_only
+E3000,0.0,2025-02-01,,left_only

@@ -1,0 +1,5 @@
+employee_id,amount_payroll,pay_date,amount_rk,_merge
+EMP001,20000.0,2024-01-15,,left_only
+EMP002,32000.0,2024-01-15,,left_only
+EMP003,15000.0,2024-01-15,,left_only
+EMP004,24000.0,2024-01-15,,left_only

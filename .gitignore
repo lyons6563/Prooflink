@@ -1,30 +1,65 @@
-# Virtual environments
-.venv/
-venv/
-env/
-
-# VS Code
-.vscode/
-
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+dist/
 
-# Data – raw & processed (DO NOT commit real data)
-data/raw/
-data/processed/
+# Virtual env
+.venv/
+venv/
 
-# But allow a few example/synthetic files if you want
-!data/raw/example_*.csv
-
-# Proofs – we DO want these
-# (commented out == tracked)
-# proofs/
-
-# OS noise
+# OS / editor junk
 .DS_Store
-Thumbs.db
+.idea/
+.vscode/
 
+# Proof artifacts (not source)
+proofs/*.json
 
+# Generated uploads and evidence artifacts
+api_uploads/
+streamlit_runs/
+
+# Runtime databases
+*.db
+prooflink_runs.db
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Staging directories
+release_staging/
+
+# Documentation (internal only)
+RECONCILIATION_FUNCTIONS_ANALYSIS.md
+REFACTORING_SUMMARY.md
+
+# Deal / broker artifacts
+ProofLink_IP_Broker_Packet.zip
+broker_packet/
+ProofLink_asset_freeze_*.zip
+ProofLink_asset_freeze_*.zip/
+*_asset_freeze_*.zip
+*_asset_freeze_*.zip/
+
+# Local release / test working dirs
+pl_test/
+Desktop/pl_test/
+
+# Local packaging / scratch
+tmp_run_outputs/
+ProofLink_asset_freeze_2025-12-19_CLEAN/
+
+# Local demo inputs
+data/raw/demo_broken_payroll.csv
+
+# Local scripts (local utilities, not part of core engine)
+scripts/make_release_zip.ps1
+scripts/create_architecture_diagram.py
+scripts/test_preflight_gate.py
+
+# Local images
+docs/architecture.png

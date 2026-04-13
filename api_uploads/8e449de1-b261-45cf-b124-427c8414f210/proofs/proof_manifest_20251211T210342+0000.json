@@ -1,0 +1,35 @@
+{
+  "run_timestamp_utc": "2025-12-11T21:03:42+00:00",
+  "payroll_file": "api_uploads\\8e449de1-b261-45cf-b124-427c8414f210\\eligibility_test_payroll.csv",
+  "recordkeeper_file": "api_uploads\\8e449de1-b261-45cf-b124-427c8414f210\\demo_secure20_rk.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "api_uploads\\8e449de1-b261-45cf-b124-427c8414f210\\output\\deferral_mismatches.csv",
+      "sha256": "b22cf337a944de2211a313b759dda8b005822013dbe465fd78f839dd5f66d3f2",
+      "row_count": 0,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "employee_id",
+        "pay_date"
+      ],
+      "merkle_root": "",
+      "row_hash_sample": []
+    },
+    "loan_mismatches": {
+      "missing": true
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "api_uploads\\8e449de1-b261-45cf-b124-427c8414f210\\output\\reconciliation_report.xlsx",
+      "sha256": "5b112fc2f1e81c9aa447ab1fdb6a80db9ae13092628022688c560c899ac567ae"
+    }
+  }
+}

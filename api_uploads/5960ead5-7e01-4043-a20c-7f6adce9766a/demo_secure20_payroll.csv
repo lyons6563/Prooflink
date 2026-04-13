@@ -1,0 +1,6 @@
+EmpNumber,Payroll_Run_Date,PreTax_Defl,Roth_Defl,Loan_Pmt,is_hce,catchup_pretax,catchup_roth
+3001,2025-11-26,200,0,0,Y,200,0
+3002,2025-11-26,220,0,0,Y,220,0
+3003,2025-11-26,150,0,20,Y,150,0
+3004,2025-11-26,100,200,10,Y,0,200
+3005,2025-11-26,90,50,0,N,0,0

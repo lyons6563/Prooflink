@@ -1,0 +1,4 @@
+employee_id,pay_date,payroll_pretax,payroll_roth,payroll_loan
+1001,2025-01-15,450,150,0
+1002,2025-01-15,600,0,125
+1003,2025-01-15,525,75,0

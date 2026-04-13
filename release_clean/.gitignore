@@ -1,0 +1,28 @@
+# Runtime artifacts
+api_uploads/
+*.db
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Generated outputs
+data/processed/
+data/proofs/
+reconciliation_report.xlsx
+proof_manifest*.json
+*.zip
+
+# OS / editor junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+

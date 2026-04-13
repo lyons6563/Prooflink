@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProofLink — Payroll ↔ Recordkeeper Reconciliation Reference Implementation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #fff;
+            padding: 2rem 1rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: #222;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 0.75rem;
+        }
+        
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            color: #444;
+        }
+        
+        p {
+            margin-bottom: 1.25rem;
+            color: #555;
+        }
+        
+        ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1.25rem;
+            color: #555;
+        }
+        
+        li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .status {
+            background-color: #f8f9fa;
+            border-left: 4px solid #6c757d;
+            padding: 1rem;
+            margin: 2rem 0;
+        }
+        
+        .contact {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #e0e0e0;
+        }
+        
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        .disclaimer {
+            font-size: 0.9rem;
+            color: #666;
+            font-style: italic;
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #e0e0e0;
+        }
+    </style>
+</head>
+<body>
+    <h1>ProofLink — Payroll ↔ Recordkeeper Reconciliation Reference Implementation</h1>
+    
+    <p>
+        <strong>Reference implementation / IP asset for sale or license.</strong> ProofLink is a pre-revenue, 
+        IP-only reference implementation for automated reconciliation and rule-based compliance analysis in 401(k) 
+        retirement plans. The codebase compares payroll contribution data against recordkeeper transaction 
+        data to detect discrepancies, timing violations, and regulatory compliance issues. This is a 
+        complete, functional codebase ready for integration into a buyer's platform.
+    </p>
+    
+    <h2>What It Includes</h2>
+    <ul>
+        <li><strong>Preflight validation gate:</strong> Enforces explicit mapping contract and required field validation before reconciliation runs</li>
+        <li><strong>Canonical mapping system:</strong> Vendor-agnostic column mapping with exact-match normalization (no fuzzy logic)</li>
+        <li><strong>Core reconciliation engine:</strong> Automated comparison of payroll vs recordkeeper contributions</li>
+        <li><strong>Compliance analyzers:</strong> Secure 2.0 catch-up rules, IRS 402(g) limits, eligibility drift detection, timing violation checks</li>
+        <li><strong>Deterministic outputs:</strong> Structured reconciliation results and exception summaries suitable for downstream audit or review workflows</li>
+        <li><strong>Test suite:</strong> Smoke tests with sample data demonstrating preflight gate functionality</li>
+        <li><strong>Documentation:</strong> Complete schema documentation, mapping examples, and buyer handoff guides</li>
+    </ul>
+    
+    <h2>What It Does Not Include</h2>
+    <ul>
+        <li>Hosted service or SaaS platform</li>
+        <li>Data adapters for specific payroll or recordkeeper systems (buyer must build these)</li>
+        <li>Fuzzy ingestion or probabilistic matching (strict exact-match + normalization only)</li>
+        <li>Production deployment infrastructure</li>
+        <li>Ongoing support or maintenance (asset sale only)</li>
+        <li>Commercial usage history (pre-revenue prototype)</li>
+    </ul>
+    
+    <div class="status">
+        <strong>Status:</strong> Exploring sale or license to a strategic buyer.
+    </div>
+    
+    <div class="contact">
+        <h2>Contact</h2>
+        <p>
+            For inquiries about acquisition or licensing: 
+            <a href="mailto:contact@example.com">contact@example.com</a>
+        </p>
+    </div>
+    
+    <div class="disclaimer">
+        This is an IP asset sale. Buyer assumes full responsibility for integration, 
+        validation, compliance, security, and production deployment.
+    </div>
+</body>
+</html>
+

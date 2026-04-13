@@ -1,0 +1,1079 @@
+import argparse
+import json
+import os
+import re
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+import pandas as pd
+
+from vendor_detection import detect_vendors as detect_vendors_unified
+
+
+def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize column names to standardize deferral/roth column variants.
+    
+    Maps various column name variants to standard names:
+    - Deferral variants → "EE Deferral $"
+    - Roth variants → "EE Roth $"
+    
+    Case-insensitive and whitespace-normalized.
+    Does not modify loan_amount or other columns.
+    """
+    df = df.copy()
+    
+    # Normalize column names: lowercase, strip whitespace, normalize whitespace to underscores
+    normalized_cols = {}
+    for col in df.columns:
+        # Lowercase, strip, and replace any whitespace (spaces, tabs, etc.) with underscores
+        normalized = re.sub(r'\s+', '_', col.strip().lower())
+        normalized_cols[col] = normalized
+    
+    # Deferral column variants
+    deferral_variants = {
+        "def_amount",
+        "employee_deferral",
+        "deferral",
+        "ee_deferral",
+        "contribution_amount",
+        "pretax",
+        "employee_pre_tax",
+        "ee_pretax_def",  # New variant: EE_PreTax_Def
+    }
+    
+    # Roth column variants
+    roth_variants = {
+        "roth_amount",
+        "roth_deferral",
+        "roth",
+        "roth_contribution",
+        "ee_roth_def",  # New variant: EE_Roth_Def
+    }
+    
+    # Build rename mapping
+    rename_map = {}
+    for original_col in df.columns:
+        normalized = normalized_cols[original_col]
+        
+        if normalized in deferral_variants:
+            rename_map[original_col] = "EE Deferral $"
+        elif normalized in roth_variants:
+            rename_map[original_col] = "EE Roth $"
+        # loan_amount and other columns are left unchanged
+    
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    
+    return df
+
+
+def classify_timing_risk(
+    total_rows: int,
+    num_late: int,
+    num_missing: int,
+    late_threshold_days: int,
+    max_days_late: Optional[int] = None,
+) -> Tuple[str, List[str]]:
+    """
+    Classify overall timing risk for Secure 2.0 purposes.
+
+    This is:
+      - Vendor-agnostic: only uses counts/thresholds, not vendor-specific fields.
+      - Audit-friendly: returns explicit drivers explaining *why* a level was chosen.
+
+    Returns:
+      timing_risk: "High", "Medium", "Low", or "N/A"
+      drivers: list of human-readable reasons for the classification
+    """
+    drivers: List[str] = []
+
+    # Guardrail: no data
+    if total_rows == 0:
+        timing_risk = "N/A"
+        drivers.append(
+            "No payroll rows were analyzed. Check input files, column mapping, "
+            "and filtered rows (e.g., all-zero deferrals)."
+        )
+        return timing_risk, drivers
+
+    # 1) Missing deposits are always High risk
+    if num_missing > 0:
+        timing_risk = "High"
+        drivers.append(
+            f"{num_missing} payroll row(s) have missing deposits "
+            "(contributions present in payroll but not in recordkeeper data)."
+        )
+        drivers.append(
+            "Missing deposits must be resolved before the plan can be considered "
+            "compliant with timely deposit requirements."
+        )
+        return timing_risk, drivers
+
+    # 2) No late rows and no missing deposits → Low risk
+    if num_late == 0:
+        timing_risk = "Low"
+        drivers.append(
+            f"No late contributions detected above the {late_threshold_days}-day "
+            "Secure 2.0 threshold."
+        )
+        drivers.append("No missing deposits detected between payroll and recordkeeper.")
+        return timing_risk, drivers
+
+    # 3) Late rows present, but no missing deposits → Medium or High
+    late_ratio = num_late / total_rows
+    drivers.append(
+        f"{num_late} late contribution row(s) detected above the "
+        f"{late_threshold_days}-day threshold out of {total_rows} payroll row(s)."
+    )
+    drivers.append(f"Late row percentage: {late_ratio:.2%}.")
+
+    if max_days_late is not None:
+        drivers.append(f"Maximum days late: {max_days_late} day(s).")
+
+        # Medium: slightly late + small footprint
+        if max_days_late <= late_threshold_days + 3 and late_ratio < 0.05:
+            timing_risk = "Medium"
+            drivers.append(
+                "Delays are only slightly above the threshold and impact fewer than "
+                "5% of rows. Escalated review recommended, but not systemic."
+            )
+        else:
+            timing_risk = "High"
+            if max_days_late > late_threshold_days + 10:
+                drivers.append(
+                    "Some contributions are significantly late (more than 10 days "
+                    "beyond the threshold)."
+                )
+            if late_ratio >= 0.05:
+                drivers.append(
+                    "Late contributions affect 5% or more of payroll rows, indicating "
+                    "a potential systemic timing issue."
+                )
+    else:
+        # Fallback if we don't have day-level lag; use ratio only
+        if late_ratio < 0.05:
+            timing_risk = "Medium"
+            drivers.append(
+                "Exact days-late data is not available, but fewer than 5% of rows "
+                "are late. Treated as Medium risk."
+            )
+        else:
+            timing_risk = "High"
+            drivers.append(
+                "Exact days-late data is not available and 5% or more of rows are "
+                "late. Treated as High risk."
+            )
+
+    return timing_risk, drivers
+
+
+# ==============================
+# Column alias resolution
+# ==============================
+
+def _normalize_col_key(name: str) -> str:
+    # lower, remove spaces and common punctuation/symbols for matching
+    key = name.strip().lower()
+    key = re.sub(r"[\s\$\%\#\-/]+", "", key)
+    return key
+
+
+def apply_column_aliases(df: pd.DataFrame, role: str = "payroll") -> pd.DataFrame:
+    """
+    Apply vendor-agnostic column alias mapping to standardize headers
+    onto our canonical names.
+
+    role: "payroll" or "rk" (if you need to treat sides differently later).
+    """
+    if df is None or df.empty:
+        return df
+
+    rename_map: Dict[str, str] = {}
+    for col in df.columns:
+        original = col.strip().lower()
+        key = _normalize_col_key(col)
+        canonical = None
+
+        # Exact / near-exact matches on raw header text
+        if original in ("ee deferral $", "ee deferral", "employee deferral $", "ee_pretax_def", "ee pretax def"):
+            canonical = "def_amount"
+        elif original in ("ee roth $", "ee roth", "employee roth $", "ee_roth_def", "ee roth def"):
+            canonical = "roth_amount"
+        elif original in ("pay date", "payroll date", "pay period end date", "pay period ending", "check date", "payroll run date", "pay_date", "pay date"):
+            canonical = "pay_date"
+        elif original in ("deposit_date", "deposit date"):
+            canonical = "deposit_date"
+        elif original in ("total_deposit_amount", "total deposit amount"):
+            canonical = "amount"
+
+        # If canonical not set by original-name checks, fall back to the existing
+        # normalized-key pattern logic (using _normalize_col_key and key-based patterns).
+        if canonical is None:
+            # employee id patterns
+            if any(tok in key for tok in ["employeeid", "empid", "employeenumber", "empnumber", "emplid", "participantid"]):
+                canonical = "employee_id"
+
+            # pay date patterns
+            elif "paydate" in key or "checkdate" in key or "payperiodend" in key or "payperiodending" in key:
+                canonical = "pay_date"
+
+            # deferral amount patterns (EE deferral / employee deferral / pretax)
+            elif "deferral" in key and ("ee" in key or "employee" in key or "pretax" in key):
+                canonical = "def_amount"
+            elif key.startswith("deferralamount"):
+                canonical = "def_amount"
+            elif "pretax" in key and "def" in key:  # Handles "ee_pretax_def"
+                canonical = "def_amount"
+
+            # roth amount patterns
+            elif "roth" in key and ("ee" in key or "employee" in key or "deferral" in key or "def" in key):
+                canonical = "roth_amount"
+
+            # loan amount patterns
+            elif "loan" in key and ("repaid" in key or "repayment" in key or "payment" in key or "pmt" in key or "amount" in key):
+                canonical = "loan_amount"
+            elif key == "loanamount":
+                canonical = "loan_amount"
+            
+            # deposit date patterns
+            elif "deposit" in key and "date" in key:
+                canonical = "deposit_date"
+            
+            # total deposit amount patterns
+            elif "total" in key and "deposit" in key and "amount" in key:
+                canonical = "amount"
+
+        # Only add if canonical is determined and doesn't already exist
+        if canonical is not None and canonical not in df.columns:
+            rename_map[col] = canonical
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    return df
+
+
+# ==============================
+# File loading
+# ==============================
+
+def load_table(path: Path) -> pd.DataFrame:
+    """Load CSV or Excel into a DataFrame."""
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    if path.suffix.lower() in [".xlsx", ".xls"]:
+        df = pd.read_excel(path)
+    else:
+        df = pd.read_csv(path)
+
+    df.columns = df.columns.str.strip()
+    return df
+
+
+# ==============================
+# Vendor detection
+# ==============================
+
+def detect_vendors_from_files(payroll_df, rk_df, payroll_path=None, rk_path=None):
+    """
+    Detect payroll vendor and recordkeeper vendor using filename heuristics
+    and column signature pattern matching.
+
+    Returns:
+        (payroll_vendor, rk_vendor)
+    """
+    payroll_vendor = None
+    rk_vendor = None
+
+    # A) Filename heuristic (case-insensitive)
+    if payroll_path:
+        p = str(payroll_path).lower()
+        if "adp" in p:
+            payroll_vendor = "ADP"
+        elif "paychex" in p:
+            payroll_vendor = "Paychex"
+        elif "paylocity" in p:
+            payroll_vendor = "Paylocity"
+        elif "paycor" in p:
+            payroll_vendor = "Paycor"
+        elif "workday" in p:
+            payroll_vendor = "Workday"
+
+    if rk_path:
+        r = str(rk_path).lower()
+        if "vendor_rk" in r:
+            rk_vendor = "VENDOR_RK_1"
+        elif "fidelity" in r:
+            rk_vendor = "Fidelity"
+        elif "principal" in r:
+            rk_vendor = "Principal"
+        elif "tiaa" in r:
+            rk_vendor = "TIAA"
+        elif "voya" in r or "voia" in r:
+            rk_vendor = "Voya"
+
+    # B) Column signature fallback
+    if payroll_df is not None and not payroll_df.empty and not payroll_vendor:
+        cols = [c.lower() for c in payroll_df.columns]
+        if any(c in cols for c in ["batch id", "check date"]):
+            payroll_vendor = "ADP"
+        if any(c in cols for c in ["company code"]):
+            payroll_vendor = "ADP"
+
+    if rk_df is not None and not rk_df.empty and not rk_vendor:
+        rkcols = [c.lower() for c in rk_df.columns]
+        if "participant number" in rkcols and "fund name" in rkcols:
+            rk_vendor = "VENDOR_RK_1"
+        if "ee pretax amt" in rkcols or "ee roth amt" in rkcols:
+            rk_vendor = "Fidelity"
+
+    # C) Defaults
+    if not payroll_vendor:
+        payroll_vendor = "GenericPayroll"
+
+    if not rk_vendor:
+        rk_vendor = "UnknownRK"
+
+    return payroll_vendor, rk_vendor
+
+
+def detect_vendors(
+    payroll_df: Optional[pd.DataFrame],
+    rk_df: Optional[pd.DataFrame],
+    payroll_source_name: Optional[str] = None,
+    rk_source_name: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Detect payroll vendor and recordkeeper based on column patterns and/or file name hints.
+
+    Returns:
+        payroll_vendor: str
+        recordkeeper_vendor: str
+
+    Fallbacks:
+        payroll_vendor: "GenericPayroll"
+        recordkeeper_vendor: "UnknownRK"
+    """
+    payroll_vendor = "GenericPayroll"
+    rk_vendor = "UnknownRK"
+
+    # Payroll vendor detection
+    if payroll_df is not None and not payroll_df.empty:
+        cols_lower = {c.lower() for c in payroll_df.columns}
+        
+        # 1) Filename hints (case-insensitive)
+        if payroll_source_name:
+            source_lower = str(payroll_source_name).lower()
+            if any(hint in source_lower for hint in ["adp"]):
+                payroll_vendor = "ADP"
+            elif any(hint in source_lower for hint in ["paychex", "paylocity", "paycor", "workday"]):
+                payroll_vendor = "Paychex"  # Generic payroll vendor
+            elif any(hint in source_lower for hint in ["payroll"]):
+                payroll_vendor = "GenericPayroll"
+        
+        # 2) Column pattern matching (scoring approach)
+        vendor_scores = {}
+        
+        # ADP signature columns
+        adp_cols = {"emp id", "check date", "ee deferral $"}
+        if adp_cols.issubset(cols_lower):
+            vendor_scores["ADP"] = len(adp_cols)
+        
+        # GenericPayroll signature columns
+        generic_cols = {"empnumber", "payroll_run_date", "pretax_defl"}
+        if generic_cols.issubset(cols_lower):
+            vendor_scores["GenericPayroll"] = len(generic_cols)
+        
+        # City457Payroll signature columns
+        city457_cols = {"employee_id", "payroll_date", "457b_ee_pretax_amt", "457b_ee_roth_amt"}
+        if city457_cols.issubset(cols_lower):
+            vendor_scores["City457Payroll"] = len(city457_cols)
+        
+        # Pick vendor with highest score if any match
+        if vendor_scores:
+            payroll_vendor = max(vendor_scores, key=vendor_scores.get)
+
+    # Recordkeeper vendor detection
+    if rk_df is not None and not rk_df.empty:
+        cols_lower = {c.lower() for c in rk_df.columns}
+        
+        # 1) Filename hints (case-insensitive)
+        if rk_source_name:
+            source_lower = str(rk_source_name).lower()
+            if any(hint in source_lower for hint in ["vendor_rk"]):
+                rk_vendor = "VENDOR_RK_1"
+            elif any(hint in source_lower for hint in ["fidelity"]):
+                rk_vendor = "Fidelity"
+            elif any(hint in source_lower for hint in ["vanguard"]):
+                rk_vendor = "Vanguard"
+            elif any(hint in source_lower for hint in ["principal", "nationwide", "jhancock", "johnhancock", "mfs", "tiaa", "voia", "voay", "massmutual"]):
+                rk_vendor = "GenericRK"  # Generic recordkeeper
+        
+        # 2) Column pattern matching (scoring approach)
+        vendor_scores = {}
+        
+        # VENDOR_RK_1 signature columns
+        vendor_rk_cols = {"part_id", "post_date", "ee_pretax"}
+        if vendor_rk_cols.issubset(cols_lower):
+            vendor_scores["VENDOR_RK_1"] = len(vendor_rk_cols)
+        
+        # GenericRK signature columns
+        generic_rk_cols = {"part_id", "post_date", "ee_pretax", "ee_roth", "loan_contr"}
+        if generic_rk_cols.issubset(cols_lower):
+            vendor_scores["GenericRK"] = len(generic_rk_cols)
+        
+        # City457RK signature columns
+        city457_rk_cols = {"plan_id", "recordkeeper_client_id", "money_type", "contribution_amount"}
+        if city457_rk_cols.issubset(cols_lower):
+            vendor_scores["City457RK"] = len(city457_rk_cols)
+        
+        # Pick vendor with highest score if any match
+        if vendor_scores:
+            rk_vendor = max(vendor_scores, key=vendor_scores.get)
+
+    return payroll_vendor, rk_vendor
+
+
+# ==============================
+# Normalization / mapping
+# ==============================
+
+def normalize_payroll(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) -> pd.DataFrame:
+    """
+    Normalize payroll dataframe to standard column names.
+    
+    For unknown/low-confidence vendors, uses generic fallback that expects
+    columns to already be normalized by normalize_column_names().
+    """
+    df = df.copy()
+    cols_lower = {c.lower(): c for c in df.columns}
+    
+    # Normalize vendor string for comparison
+    vendor_str = str(vendor).strip() if vendor else None
+    
+    # Check if this is a generic/fallback case
+    # Treat as generic if: None, "Unknown", "UnknownPayroll", or low confidence
+    is_generic = (
+        vendor_str is None
+        or vendor_str in ("Unknown", "UnknownPayroll", "")
+        or vendor_confidence < 0.65
+    )
+    
+    # Known vendors that require strict schema (only if confidence >= 0.65)
+    known_vendors = {"ADP", "GenericPayroll", "City457Payroll"}
+    is_known_high_confidence = (vendor_str in known_vendors and vendor_confidence >= 0.65)
+    
+    if not is_known_high_confidence:
+        # Generic fallback path - do NOT enforce vendor-specific columns
+        # Generic fallback: assume columns already normalized by normalize_column_names()
+        # Use standard column names: "EE Deferral $", "EE Roth $", loan_amount
+        out = pd.DataFrame()
+        
+        # employee_id - try common variants
+        emp_id_col = None
+        for col_name in ["employee_id", "emp_id", "employee id", "emp id", "employee number"]:
+            if col_name in df.columns:
+                emp_id_col = col_name
+                break
+            # Case-insensitive search
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    emp_id_col = col
+                    break
+            if emp_id_col:
+                break
+        
+        if emp_id_col:
+            out["employee_id"] = df[emp_id_col]
+        else:
+            print("[WARN] employee_id column not found. Analysis may fail.")
+            # Try to use index or first column as fallback
+            if len(df) > 0:
+                out["employee_id"] = df.index if hasattr(df.index, 'values') else range(len(df))
+        
+        # pay_date - try common variants
+        pay_date_col = None
+        for col_name in ["pay_date", "pay date", "payroll_date", "payroll date", "check_date", "check date"]:
+            if col_name in df.columns:
+                pay_date_col = col_name
+                break
+            # Case-insensitive search
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    pay_date_col = col
+                    break
+            if pay_date_col:
+                break
+        
+        if pay_date_col:
+            out["pay_date"] = pd.to_datetime(df[pay_date_col], errors="coerce")
+        else:
+            out["pay_date"] = pd.NaT
+        
+        # Use normalized column names from normalize_column_names() or canonical aliases
+        # Check for canonical names first, then fall back to vendor-specific names
+        if "def_amount" in df.columns:
+            out["payroll_pretax"] = pd.to_numeric(df["def_amount"], errors="coerce").fillna(0.0)
+        elif "EE Deferral $" in df.columns:
+            out["payroll_pretax"] = pd.to_numeric(df["EE Deferral $"], errors="coerce").fillna(0.0)
+        else:
+            out["payroll_pretax"] = 0.0
+        
+        if "roth_amount" in df.columns:
+            out["payroll_roth"] = pd.to_numeric(df["roth_amount"], errors="coerce").fillna(0.0)
+        elif "EE Roth $" in df.columns:
+            out["payroll_roth"] = pd.to_numeric(df["EE Roth $"], errors="coerce").fillna(0.0)
+        else:
+            out["payroll_roth"] = 0.0
+        
+        if "loan_amount" in df.columns:
+            out["payroll_loan"] = pd.to_numeric(df["loan_amount"], errors="coerce").fillna(0.0)
+        else:
+            print("[WARN] 'loan_amount' column not found. Using 0.0.")
+            out["payroll_loan"] = 0.0
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
+        return out
+    
+    # Only reach here if we have a known vendor with high confidence
+    # Enforce strict requirements for known vendors
+    if vendor_str == "ADP":
+        mapping = {
+            "employee_id": "Emp ID",
+            "pay_date": "Check Date",
+            "payroll_pretax": "EE Deferral $",
+            "payroll_roth": "EE Roth $",
+            "payroll_loan": "Loan Repay $",
+        }
+
+    elif vendor_str == "GenericPayroll":
+        mapping = {
+            "employee_id": "EmpNumber",
+            "pay_date": "Payroll_Run_Date",
+            "payroll_pretax": "PreTax_Defl",
+            "payroll_roth": "Roth_Defl",
+            "payroll_loan": "Loan_Pmt",
+        }
+
+    elif vendor_str == "City457Payroll":
+        # City of Lakes 457(b) payroll schema
+        mapping = {
+            "employee_id": cols_lower["employee_id"],           # Employee_ID
+            "pay_date": cols_lower["payroll_date"],             # Payroll_Date
+            "payroll_pretax": cols_lower["457b_ee_pretax_amt"], # 457b_EE_Pretax_Amt
+            "payroll_roth": cols_lower["457b_ee_roth_amt"],     # 457b_EE_Roth_Amt
+            "payroll_loan": cols_lower["457b_loan_repay_amt"],  # 457b_Loan_Repay_Amt
+        }
+
+    else:
+        # Should not reach here due to is_known_high_confidence check, but handle gracefully
+        print(f"[WARN] Unexpected vendor '{vendor_str}' with high confidence. Using generic fallback.")
+        return normalize_payroll(df, "UnknownPayroll", 0.0)
+
+    # For known vendors, enforce strict requirements
+    out = pd.DataFrame()
+    for target, source in mapping.items():
+        if source not in df.columns:
+            raise KeyError(
+                f"Expected payroll column '{source}' not found for vendor '{vendor}'"
+            )
+        out[target] = df[source]
+
+    for col in ["payroll_pretax", "payroll_roth", "payroll_loan"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    out["pay_date"] = pd.to_datetime(out["pay_date"], errors="coerce")
+    
+    # Normalize employee_id to string dtype for consistent merging
+    if "employee_id" in out.columns:
+        out["employee_id"] = out["employee_id"].astype(str).str.strip()
+
+    return out
+
+
+def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) -> pd.DataFrame:
+    """
+    Normalize recordkeeper dataframe to standard column names.
+    
+    For unknown/low-confidence vendors, uses generic fallback that expects
+    columns to already be normalized by normalize_column_names().
+    """
+    df = df.copy()
+    cols_lower = {c.lower(): c for c in df.columns}
+    
+    # Normalize vendor string for comparison
+    vendor_str = str(vendor).strip() if vendor else None
+    
+    # Check if this is a generic/fallback case
+    # Treat as generic if: None, "Unknown", "UnknownRK", or low confidence
+    is_generic = (
+        vendor_str is None
+        or vendor_str in ("Unknown", "UnknownRK", "")
+        or vendor_confidence < 0.65
+    )
+    
+    # Known vendors that require strict schema (only if confidence >= 0.65)
+    known_vendors = {"VENDOR_RK_1", "GenericRK", "City457RK"}
+    is_known_high_confidence = (vendor_str in known_vendors and vendor_confidence >= 0.65)
+    
+    if not is_known_high_confidence:
+        # Generic fallback path - do NOT enforce vendor-specific columns
+        # Generic fallback: assume columns already normalized by normalize_column_names()
+        out = pd.DataFrame()
+        
+        # employee_id - try common variants
+        emp_id_col = None
+        for col_name in ["employee_id", "emp_id", "employee id", "emp id", "part_id", "participant_id", "participant id"]:
+            if col_name in df.columns:
+                emp_id_col = col_name
+                break
+            # Case-insensitive search
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    emp_id_col = col
+                    break
+            if emp_id_col:
+                break
+        
+        if emp_id_col:
+            out["employee_id"] = df[emp_id_col]
+        else:
+            print("[WARN] employee_id column not found in RK. Analysis may fail.")
+            if len(df) > 0:
+                out["employee_id"] = df.index if hasattr(df.index, 'values') else range(len(df))
+        
+        # deposit_date - try common variants
+        deposit_date_col = None
+        for col_name in ["deposit_date", "deposit date", "post_date", "post date", "transaction_date", "transaction date"]:
+            if col_name in df.columns:
+                deposit_date_col = col_name
+                break
+            # Case-insensitive search
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    deposit_date_col = col
+                    break
+            if deposit_date_col:
+                break
+        
+        if deposit_date_col:
+            out["deposit_date"] = pd.to_datetime(df[deposit_date_col], errors="coerce")
+        else:
+            print("[WARN] deposit_date column not found in RK. Late contribution detection may be limited.")
+            out["deposit_date"] = pd.NaT
+        
+        # Use normalized column names from normalize_column_names() or canonical aliases
+        # Check for canonical names first, then fall back to vendor-specific names
+        if "def_amount" in df.columns:
+            out["rk_pretax"] = pd.to_numeric(df["def_amount"], errors="coerce").fillna(0.0)
+        elif "EE Deferral $" in df.columns:
+            out["rk_pretax"] = pd.to_numeric(df["EE Deferral $"], errors="coerce").fillna(0.0)
+        else:
+            out["rk_pretax"] = 0.0
+        
+        if "roth_amount" in df.columns:
+            out["rk_roth"] = pd.to_numeric(df["roth_amount"], errors="coerce").fillna(0.0)
+        elif "EE Roth $" in df.columns:
+            out["rk_roth"] = pd.to_numeric(df["EE Roth $"], errors="coerce").fillna(0.0)
+        else:
+            out["rk_roth"] = 0.0
+        
+        if "loan_amount" in df.columns:
+            out["rk_loan"] = pd.to_numeric(df["loan_amount"], errors="coerce").fillna(0.0)
+        else:
+            print("[WARN] 'loan_amount' column not found in RK. Using 0.0.")
+            out["rk_loan"] = 0.0
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
+        return out
+
+    # Only reach here if we have a known vendor with high confidence
+    # Enforce strict requirements for known vendors
+    if vendor_str in ("VENDOR_RK_1", "GenericRK"):
+        mapping = {
+            "employee_id": "Part_ID",
+            "deposit_date": "Post_Date",
+            "rk_pretax": "EE_PreTax",
+            "rk_roth": "EE_Roth",
+            "rk_loan": "Loan_Contr",
+        }
+
+        out = pd.DataFrame()
+        for target, source in mapping.items():
+            if source not in df.columns:
+                raise KeyError(
+                    f"Expected RK column '{source}' not found for vendor '{vendor}'"
+                )
+            out[target] = df[source]
+
+        for col in ["rk_pretax", "rk_roth", "rk_loan"]:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+        out["deposit_date"] = pd.to_datetime(out["deposit_date"], errors="coerce")
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+        
+        return out
+
+    elif vendor_str == "City457RK":
+        # City of Lakes 457(b) RK schema
+        emp_col = cols_lower["employee_id"]  # Employee_ID
+        date_col = cols_lower.get(
+            "transaction_effective_date", "Transaction_Effective_Date"
+        )
+        money_type_col = cols_lower["money_type"]         # Money_Type
+        amt_col = cols_lower["contribution_amount"]       # Contribution_Amount
+
+        df[amt_col] = pd.to_numeric(df[amt_col], errors="coerce").fillna(0.0)
+
+        grouped = (
+            df.groupby([emp_col, date_col, money_type_col], as_index=False)[amt_col]
+            .sum()
+        )
+
+        pivot = (
+            grouped.pivot(
+                index=[emp_col, date_col],
+                columns=money_type_col,
+                values=amt_col,
+            )
+            .fillna(0.0)
+        ).reset_index()
+
+        out = pd.DataFrame()
+        out["employee_id"] = pivot[emp_col]
+        out["deposit_date"] = pd.to_datetime(pivot[date_col], errors="coerce")
+
+        pretax_series = pivot.get("457b_Pretax", 0.0)
+        roth_series = pivot.get("457b_Roth", 0.0)
+
+        out["rk_pretax"] = pd.to_numeric(pretax_series, errors="coerce").fillna(0.0)
+        out["rk_roth"] = pd.to_numeric(roth_series, errors="coerce").fillna(0.0)
+        out["rk_loan"] = 0.0  # no explicit loan field in this RK schema
+        
+        # Normalize employee_id to string dtype for consistent merging
+        if "employee_id" in out.columns:
+            out["employee_id"] = out["employee_id"].astype(str).str.strip()
+
+        return out
+
+    else:
+        # Should not reach here due to is_known_high_confidence check, but handle gracefully
+        print(f"[WARN] Unexpected RK vendor '{vendor_str}' with high confidence. Using generic fallback.")
+        return normalize_rk(df, "UnknownRK", 0.0)
+
+
+# ==============================
+# Timing / late-contribution logic
+# ==============================
+
+def compute_timing_risk(total_rows: int, late_rows: int) -> str:
+    """
+    Return 'Low', 'Medium', or 'High' timing risk based on the late contribution rate.
+    
+    - Low: late_rate <= 0.05 (5% or less)
+    - Medium: 0.05 < late_rate <= 0.15 (5-15%)
+    - High: late_rate > 0.15 (more than 15%)
+    
+    If total_rows == 0, return 'N/A'.
+    """
+    if total_rows == 0:
+        return "N/A"
+    
+    late_rate = late_rows / total_rows
+    
+    if late_rate <= 0.05:
+        return "Low"
+    elif late_rate <= 0.15:
+        return "Medium"
+    else:
+        return "High"
+
+
+def business_days_between(start: pd.Series, end: pd.Series) -> pd.Series:
+    delta_days = (end.dt.normalize() - start.dt.normalize()).dt.days
+    delta_days = delta_days.clip(lower=0)
+    return delta_days
+
+
+def compute_late_contributions(payroll_df: pd.DataFrame,
+                               rk_df: pd.DataFrame,
+                               late_threshold_days: int = 5) -> pd.DataFrame:
+    payroll_df = payroll_df.copy()
+    rk_df = rk_df.copy()
+
+    payroll_df["pay_total"] = (
+        payroll_df["payroll_pretax"]
+        + payroll_df["payroll_roth"]
+        + payroll_df["payroll_loan"]
+    )
+
+    rk_df["rk_total"] = (
+        rk_df["rk_pretax"]
+        + rk_df["rk_roth"]
+        + rk_df["rk_loan"]
+    )
+
+    # Defensive: ensure employee_id is normalized before merge
+    if "employee_id" in payroll_df.columns:
+        payroll_df["employee_id"] = payroll_df["employee_id"].astype(str).str.strip()
+    if "employee_id" in rk_df.columns:
+        rk_df["employee_id"] = rk_df["employee_id"].astype(str).str.strip()
+
+    merged = payroll_df.merge(
+        rk_df,
+        on=["employee_id"],
+        how="left",
+        suffixes=("_payroll", "_rk"),
+    )
+
+    merged["days_to_deposit"] = business_days_between(
+        merged["pay_date"],
+        merged["deposit_date"],
+    )
+
+    merged["is_late"] = merged["days_to_deposit"] > late_threshold_days
+    merged["missing_deposit"] = merged["deposit_date"].isna()
+
+    return merged
+
+
+# ==============================
+# CLI orchestration
+# ==============================
+
+def run_timing_analysis(
+    payroll_path: str,
+    rk_path: str,
+    output_dir: str,
+    late_threshold_days: int = 5,
+) -> dict:
+    """
+    Programmatic entrypoint for contribution timing analysis.
+
+    Args:
+        payroll_path: Path to the payroll CSV.
+        rk_path: Path to the recordkeeper CSV.
+        output_dir: Directory to write outputs (CSV + JSON).
+        late_threshold_days: Secure 2.0 timing threshold in days.
+
+    Returns:
+        A dict summary containing at least:
+            {
+                "total_rows": int,
+                "late_rows": int,
+                "missing_deposits": int,
+                "timing_risk": str,
+                "late_contributions_path": str,
+                "timing_summary_path": str,
+            }
+    """
+    # Convert string paths to Path objects
+    payroll_path_obj = Path(payroll_path)
+    rk_path_obj = Path(rk_path)
+    output_dir_obj = Path(output_dir)
+    output_dir_obj.mkdir(parents=True, exist_ok=True)
+
+    raw_payroll = load_table(payroll_path_obj)
+    raw_rk = load_table(rk_path_obj)
+    
+    # Normalize column names first (handles flexible deferral/roth variants)
+    raw_payroll = normalize_column_names(raw_payroll)
+    raw_rk = normalize_column_names(raw_rk)
+    
+    # Apply vendor-agnostic column aliases to standardize headers
+    raw_payroll = apply_column_aliases(raw_payroll, role="payroll")
+    raw_rk = apply_column_aliases(raw_rk, role="rk")
+
+    # Use the unified vendor detection module (single source of truth)
+    vendor_detection_result = detect_vendors_unified(
+        payroll_df=raw_payroll,
+        rk_df=raw_rk,
+    )
+    
+    payroll_vendor = vendor_detection_result.payroll_vendor
+    payroll_confidence = vendor_detection_result.payroll_confidence
+    rk_vendor = vendor_detection_result.rk_vendor
+    rk_confidence = vendor_detection_result.rk_confidence
+
+    print("=== Vendor Detection ===")
+    print(f"Detected payroll vendor:     {payroll_vendor} (confidence: {payroll_confidence:.2f})")
+    print(f"Detected recordkeeper:       {rk_vendor} (confidence: {rk_confidence:.2f})")
+    print()
+
+    payroll = normalize_payroll(raw_payroll, payroll_vendor, payroll_confidence)
+    rk = normalize_rk(raw_rk, rk_vendor, rk_confidence)
+    
+    # Canonical warning checks after normalization
+    if "pay_date" not in payroll.columns:
+        print("[WARN] pay_date column not found. Late contribution detection may be limited.")
+    
+    if "payroll_pretax" not in payroll.columns:
+        print("[WARN] Payroll pretax deferral column not found after normalization. Using 0.0 for pretax amounts.")
+    
+    if "payroll_roth" not in payroll.columns:
+        print("[WARN] Payroll Roth deferral column not found after normalization. Using 0.0 for Roth amounts.")
+    
+    if "rk_pretax" not in rk.columns:
+        print("[WARN] Recordkeeper pretax column not found after normalization. Using 0.0 for pretax amounts.")
+    
+    if "rk_roth" not in rk.columns:
+        print("[WARN] Recordkeeper Roth column not found after normalization. Using 0.0 for Roth amounts.")
+
+    # Canonical join key for participants
+    # Normalize employee_id to string for vendor-agnostic matching
+    # Normalize employee_id types for consistent matching
+    for df_name, df in [("payroll", payroll), ("recordkeeper", rk)]:
+        if df is not None and "employee_id" in df.columns:
+            df["employee_id"] = df["employee_id"].astype(str).str.strip()
+
+    result = compute_late_contributions(
+        payroll_df=payroll,
+        rk_df=rk,
+        late_threshold_days=late_threshold_days,
+    )
+
+    late_rows = result[(result["is_late"]) | (result["missing_deposit"])].copy()
+
+    # Build output paths explicitly
+    late_contributions_path = os.path.join(output_dir, "late_contributions.csv")
+    timing_summary_path = os.path.join(output_dir, "timing_summary.json")
+    
+    late_path = Path(late_contributions_path)
+    late_rows.to_csv(late_path, index=False)
+
+    # Compute core counts for timing risk
+    # result is the merged DataFrame from compute_late_contributions (payroll_df_normalized equivalent)
+    total_rows = len(result)
+    late_contributions_df = result[result["is_late"]].copy() if "is_late" in result.columns else None
+    missing_deposits_df = result[result["missing_deposit"]].copy() if "missing_deposit" in result.columns else None
+    
+    num_late = len(late_contributions_df) if late_contributions_df is not None else 0
+    # Compute num_missing directly from result DataFrame to ensure accuracy
+    if "missing_deposit" in result.columns:
+        num_missing = int(result["missing_deposit"].sum())
+    else:
+        num_missing = len(missing_deposits_df) if missing_deposits_df is not None else 0
+
+    # Hard business rule:
+    # - Any missing deposits -> High risk
+    # - Otherwise, any late rows -> Medium risk (for now)
+    # - Otherwise -> Low risk
+    if num_missing > 0:
+        timing_risk = "High"
+    elif num_late > 0:
+        timing_risk = "Medium"
+    else:
+        timing_risk = "Low"
+
+    print()
+    print("==============================")
+    print("  CONTRIBUTION TIMING SUMMARY")
+    print("==============================")
+    print()
+    print(f"Total payroll rows analyzed:  {total_rows}")
+    print(f"Late contributions (> {late_threshold_days} days): {num_late}")
+    print(f"Missing deposit rows:         {num_missing}")
+    print(f"Timing Risk:                  {timing_risk}")
+    print()
+    print(f"Late-contribution detail CSV written to: {late_path}")
+    
+    # Create summary dict
+    summary_data = {
+        "total_rows": total_rows,
+        "late_rows": num_late,
+        "missing_deposits": num_missing,
+        "risk_level": timing_risk,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "source_hash": None,
+    }
+    
+    # Write timing_summary.json
+    summary_path = Path(timing_summary_path)
+    with open(summary_path, "w") as f:
+        json.dump(summary_data, f, indent=4)
+    print(f"Timing summary JSON written to: {summary_path}")
+    
+    # Return summary dict for programmatic use
+    return {
+        "total_rows": total_rows,
+        "late_rows": num_late,
+        "missing_deposits": num_missing,
+        "timing_risk": timing_risk,
+        "late_contributions_path": late_contributions_path,
+        "timing_summary_path": timing_summary_path,
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="ProofLink Contribution Timing Analyzer (v2 with vendor auto-detection)"
+    )
+
+    parser.add_argument(
+        "payroll",
+        nargs="?",
+        help="Path to payroll file (CSV or Excel). If omitted, uses default synthetic payroll.",
+    )
+    parser.add_argument(
+        "recordkeeper",
+        nargs="?",
+        help="Path to recordkeeper file (CSV or Excel). If omitted, uses default synthetic RK.",
+    )
+    parser.add_argument(
+        "--late-threshold",
+        type=int,
+        default=5,
+        help="Late threshold in days (default: 5).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(Path(__file__).resolve().parents[1] / "data" / "processed"),
+        help="Directory for output CSV (default: ../data/processed).",
+    )
+
+    return parser.parse_args()
+
+
+def resolve_default_paths(payroll_arg: str | None,
+                          rk_arg: str | None) -> tuple[Path, Path]:
+    project_root = Path(__file__).resolve().parents[1]
+    raw_dir = project_root / "data" / "raw"
+
+    default_payroll = raw_dir / "payroll_adp_synthetic_400.csv"
+    default_rk = raw_dir / "rk_vendor_rk_synthetic_400.csv"
+
+    if payroll_arg is None and rk_arg is None:
+        return default_payroll, default_rk
+    elif payroll_arg is not None and rk_arg is None:
+        return Path(payroll_arg), default_rk
+    else:
+        return Path(payroll_arg), Path(rk_arg)
+
+
+def main():
+    args = parse_args()
+    payroll_path, rk_path = resolve_default_paths(args.payroll, args.recordkeeper)
+    output_dir = args.output_dir
+
+    run_timing_analysis(
+        payroll_path=str(payroll_path),
+        rk_path=str(rk_path),
+        output_dir=output_dir,
+        late_threshold_days=args.late_threshold,
+    )
+
+
+if __name__ == "__main__":
+    main()

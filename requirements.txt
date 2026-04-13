@@ -1,12 +1,36 @@
-streamlit
-pandas
-numpy
-python-dateutil
-pytz
-openpyxl
-PyYAML
-altair
-requests
-watchdog
+# Direct dependencies for ProofLink reconciliation engine
+# Pin major versions; let pip resolve compatible sub-versions.
+# Run `pip install -r requirements.txt` to install.
 
+# Core data / numerics
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0
 
+# Date utilities
+python-dateutil>=2.8.0
+pytz>=2024.1
+
+# Config parsing
+PyYAML>=6.0
+
+# HTTP / API
+requests>=2.31.0
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.0
+
+# Auth
+passlib[bcrypt]>=1.7.4
+PyJWT>=2.8.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# UI
+streamlit>=1.35.0
+altair>=5.0.0
+
+# Testing
+pytest>=8.0.0

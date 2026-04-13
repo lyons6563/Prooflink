@@ -1,0 +1,5 @@
+employee_id,pay_date,payroll_pretax,payroll_roth,payroll_loan,pay_total,deposit_date,rk_pretax,rk_roth,rk_loan,rk_total,days_to_deposit,is_late,missing_deposit
+EMP_A,2022-03-15,1000.0,0.0,0.0,1000.0,,,,,,,False,True
+EMP_B,2022-07-01,0.0,0.0,0.0,0.0,,,,,,,False,True
+EMP_B,2022-08-01,0.0,0.0,0.0,0.0,,,,,,,False,True
+EMP_B,2022-09-01,0.0,0.0,0.0,0.0,,,,,,,False,True

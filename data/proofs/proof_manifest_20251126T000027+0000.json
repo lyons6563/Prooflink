@@ -1,0 +1,58 @@
+{
+  "run_timestamp_utc": "2025-11-26T00:00:27+00:00",
+  "payroll_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_uploaded_uploaded_uploaded_Payroll 11.24.csv",
+  "recordkeeper_file": "C:\\Users\\Sam Lyons\\Documents\\dev\\data\\raw\\uploaded_uploaded_uploaded_uploaded_uploaded_recordkeeper11.24.csv",
+  "config_name": "synthetic_400_adp_empower.json",
+  "outputs": {
+    "deferral_mismatches": {
+      "path": "data\\processed\\deferral_mismatches.csv",
+      "sha256": "399d104744b81b8400dfe8d118860dfd1ab4d08e8366f77eb8382a40c78f3da0",
+      "row_count": 1,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "delta",
+        "deposit_date",
+        "employee_id",
+        "first_name",
+        "last_name"
+      ],
+      "merkle_root": "322ada0d34906e53fb03dc019b997c27d105d8a7fbd1f4e52ccaf8e3bb30215e",
+      "row_hash_sample": [
+        "322ada0d34906e53fb03dc019b997c27d105d8a7fbd1f4e52ccaf8e3bb30215e"
+      ]
+    },
+    "loan_mismatches": {
+      "path": "data\\processed\\loan_mismatches.csv",
+      "sha256": "4060ca45c289fbc2b7fa950bbd0d312615a2e7bd8eac13412599aec72cc1a89d",
+      "row_count": 3,
+      "columns": [
+        "_merge",
+        "amount_payroll",
+        "amount_rk",
+        "delta",
+        "deposit_date",
+        "employee_id",
+        "first_name",
+        "last_name"
+      ],
+      "merkle_root": "6eafc67af1d29fcb1c491e6c30565c992052af0d1dea37a858ff45f1a3b8a107",
+      "row_hash_sample": [
+        "bdcabda3f278e27be4e3d592f95cfe963696af155825696c4583491ae5f65a48",
+        "bf6101a5da9e85a66eda7a125d79ddc1a9d01b7fc5f0062263e90f6f0d9f5322",
+        "26a035d0a3a62796fca4c924e33d79924cb83cc2dcb468ad84bafc28579b62b8"
+      ]
+    },
+    "late_deferrals": {
+      "missing": true
+    },
+    "late_loans": {
+      "missing": true
+    },
+    "excel_report": {
+      "path": "data\\processed\\reconciliation_report.xlsx",
+      "sha256": "f8e04d9cf7e4e6df24e4de8dd86b5d18ba00a2da8750b05e3d4f9634a9634f73"
+    }
+  }
+}
