@@ -144,6 +144,39 @@ def test_true_up_does_not_overflag_per_payroll_variance(tmp_path: Path):
     assert issues.loc[0, "severity"] in {"Low", "Medium"}
 
 
+def test_deferral_amount_prevents_component_double_counting(tmp_path: Path):
+    df = pd.DataFrame(
+        [
+            _base_row(
+                **{
+                    "EE Deferral $": 40.0,
+                    "EE Roth $": 0.0,
+                    "deferral_amount": 40.0,
+                    "ER Match $": 20.0,
+                }
+            )
+        ]
+    )
+
+    summary, csv_path = analyze_compensation_match(df, tmp_path, BASE_CONFIG)
+
+    assert summary["issue_count"] == 0
+    assert summary["csv_path"] is None
+    assert csv_path is None
+
+
+def test_true_up_timing_difference_excluded_from_under_match_estimate(tmp_path: Path):
+    config = BASE_CONFIG | {"match_frequency": "annual"}
+    df = pd.DataFrame([_base_row(**{"ER Match $": 0.0})])
+
+    summary, csv_path = analyze_compensation_match(df, tmp_path, config)
+
+    assert summary["issue_count"] == 1
+    assert summary["estimated_under_match_dollars"] == 0.0
+    issues = pd.read_csv(csv_path)
+    assert issues.loc[0, "issue_type"] == "Potential annual true-up timing difference"
+
+
 def test_source_data_incomplete_warning(tmp_path: Path):
     incomplete_df = pd.DataFrame(
         [

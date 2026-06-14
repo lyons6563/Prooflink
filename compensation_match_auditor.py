@@ -45,7 +45,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 DEFERRAL_COLUMNS = [
     "EE Deferral $",
     "EE Roth $",
-    "deferral_amount",
     "roth_amount",
     "catchup_pretax",
     "catchup_roth",
@@ -112,6 +111,15 @@ def _first_numeric(df: pd.DataFrame, columns: Iterable[str]) -> pd.Series:
     return _numeric_series(df, present[0])
 
 
+def _employee_deferrals(df: pd.DataFrame, config: Dict[str, Any]) -> pd.Series:
+    configured_columns = config.get("deferral_columns")
+    if configured_columns:
+        return _numeric_sum(df, configured_columns)
+    if "deferral_amount" in df.columns:
+        return _numeric_series(df, "deferral_amount")
+    return _numeric_sum(df, DEFERRAL_COLUMNS)
+
+
 def _is_class_excluded(employee_class: Any, config: Dict[str, Any]) -> bool:
     if employee_class is None or pd.isna(employee_class):
         return False
@@ -168,7 +176,10 @@ def _summary(
             "csv_path": None,
         }
     else:
-        under = issues_df[issues_df["match_variance"] < 0]
+        under = issues_df[
+            (issues_df["match_variance"] < 0)
+            & (issues_df["issue_type"] != ISSUE_TRUE_UP)
+        ]
         over = issues_df[issues_df["match_variance"] > 0]
         result = {
             "total_rows_evaluated": total_rows,
@@ -253,11 +264,10 @@ def analyze_compensation_match(
         class_column = config.get("employee_class_column")
         gross_comp_columns = config.get("gross_comp_columns", [])
         gross_comp_present = _present_columns(df, gross_comp_columns)
-        deferral_columns = _present_columns(df, DEFERRAL_COLUMNS)
 
         df["eligible_comp"] = _numeric_sum(df, eligible_columns)
         df["excluded_comp"] = _numeric_sum(df, excluded_columns)
-        df["employee_deferrals"] = _numeric_sum(df, deferral_columns)
+        df["employee_deferrals"] = _employee_deferrals(df, config)
         df["actual_match"] = _numeric_series(df, match_column)
         df["gross_comp"] = _first_numeric(df, gross_comp_present)
 
