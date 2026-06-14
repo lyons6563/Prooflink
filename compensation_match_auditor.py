@@ -38,6 +38,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "excluded_classes": [],
     "actual_match_column": "ER Match $",
     "gross_comp_columns": ["Gross Compensation", "Gross Comp", "Total Compensation"],
+    "true_up_enabled_column": "True-Up Enabled",
     "absolute_tolerance": 5.00,
     "relative_tolerance_pct": 0.15,
 }
@@ -145,6 +146,16 @@ def _outside_tolerance(
     relative_tolerance_pct: float,
 ) -> bool:
     return variance_abs > absolute_tolerance and variance_pct > relative_tolerance_pct
+
+
+def _truthy(value: Any) -> bool:
+    if value is None or pd.isna(value):
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _metadata(issue_type: str) -> Dict[str, str]:
@@ -275,7 +286,8 @@ def analyze_compensation_match(
         match_cap_pct = float(config.get("match_cap_pct", 0.06))
         absolute_tolerance = float(config.get("absolute_tolerance", 5.00))
         relative_tolerance_pct = float(config.get("relative_tolerance_pct", 0.15))
-        true_up_mode = bool(config.get("true_up_enabled")) or config.get("match_frequency") == "annual"
+        global_true_up_mode = bool(config.get("true_up_enabled")) or config.get("match_frequency") == "annual"
+        true_up_enabled_column = config.get("true_up_enabled_column")
 
         issues: List[Dict[str, Any]] = []
 
@@ -287,6 +299,13 @@ def analyze_compensation_match(
             gross_comp = float(row["gross_comp"])
             employee_class = row.get(class_column) if class_column in df.columns else None
             class_excluded = _is_class_excluded(employee_class, config)
+            row_true_up_mode = (
+                global_true_up_mode
+                or (
+                    true_up_enabled_column in df.columns
+                    and _truthy(row.get(true_up_enabled_column))
+                )
+            )
 
             if class_excluded:
                 expected_match = 0.0
@@ -323,7 +342,7 @@ def analyze_compensation_match(
                 relative_tolerance_pct,
             ):
                 if match_variance < 0:
-                    if true_up_mode:
+                    if row_true_up_mode:
                         issue_type = ISSUE_TRUE_UP
                         likely_root_cause = ROOT_TRUE_UP_TIMING
                     else:
