@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, Iterable
 from collections import Counter
 
 from datetime import datetime
@@ -35,6 +35,8 @@ from eligibility_drift_analyzer import analyze_eligibility_drift
 from comp_402g_analyzer import analyze_comp_402g_limits
 
 from match_reasonableness_analyzer import analyze_match_reasonableness
+
+from compensation_match_auditor import analyze_compensation_match
 
 from plan_exception_summary import build_plan_exception_summary
 
@@ -326,6 +328,7 @@ def _compute_weighted_violations(by_category: Dict[str, int]) -> int:
       - Eligibility:  2
       - Comp/402(g):  3
       - Match:        2
+      - Compensation/Match: 3
       - Timing:       1
       - Other:        1
     """
@@ -334,6 +337,7 @@ def _compute_weighted_violations(by_category: Dict[str, int]) -> int:
         "Eligibility": 2,
         "Comp/402(g)": 3,
         "Match": 2,
+        "Compensation/Match": 3,
         "Timing": 1,
         "Other": 1,
     }
@@ -406,6 +410,74 @@ def _inject_run_metadata_into_csv(
         df.to_csv(path, index=False)
     except Exception as exc:
         print(f"[WARN] _inject_run_metadata_into_csv failed for {csv_path}: {exc}")
+
+
+def _add_csv_sheet_to_excel(
+    excel_path: Union[str, Path],
+    csv_path: Optional[Union[str, Path]],
+    sheet_name: str,
+) -> None:
+    """Append or replace a worksheet from a CSV in an existing Excel report."""
+    if not csv_path:
+        return
+    excel_path = Path(excel_path)
+    csv_path = Path(csv_path)
+    if not excel_path.exists() or not csv_path.exists():
+        return
+    try:
+        df = pd.read_csv(csv_path)
+        with pd.ExcelWriter(
+            excel_path,
+            engine="openpyxl",
+            mode="a",
+            if_sheet_exists="replace",
+        ) as writer:
+            df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+    except Exception as exc:
+        print(f"[WARN] Could not add {sheet_name} sheet to Excel report: {exc}")
+
+
+def _ensure_files_in_evidence_pack(
+    evidence_pack_path: Union[str, Path],
+    file_paths: Iterable[Optional[Union[str, Path]]],
+) -> None:
+    """Rewrite the evidence ZIP so late-stage analyzer outputs are included once."""
+    evidence_pack_path = Path(evidence_pack_path)
+    if not evidence_pack_path.exists():
+        return
+
+    new_paths = [Path(path) for path in file_paths if path and Path(path).exists()]
+    if not new_paths:
+        return
+
+    temp_zip = evidence_pack_path.with_suffix(".tmp.zip")
+    new_by_name = {path.name: path for path in new_paths}
+
+    try:
+        with zipfile.ZipFile(evidence_pack_path, "r") as source, zipfile.ZipFile(
+            temp_zip,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as target:
+            existing_names = set()
+            for info in source.infolist():
+                if info.filename in new_by_name:
+                    continue
+                target.writestr(info, source.read(info.filename))
+                existing_names.add(info.filename)
+
+            for arcname, path in new_by_name.items():
+                if arcname not in existing_names:
+                    target.write(path, arcname=arcname)
+
+        temp_zip.replace(evidence_pack_path)
+    except Exception as exc:
+        print(f"[WARN] Could not update evidence pack with analyzer outputs: {exc}")
+        if temp_zip.exists():
+            try:
+                temp_zip.unlink()
+            except Exception:
+                pass
 
 
 def run_prooflink_engine(
@@ -750,6 +822,65 @@ def run_prooflink_engine(
             "csv_path": None,
             "warning": f"Match analysis failed: {exc}",
         }
+
+    # Run compensation definition + match impact auditor
+    compensation_match_summary = {
+        "total_rows_evaluated": 0,
+        "participants_evaluated": 0,
+        "issue_count": 0,
+        "under_match_count": 0,
+        "over_match_count": 0,
+        "excluded_class_match_count": 0,
+        "estimated_under_match_dollars": 0.0,
+        "estimated_over_match_dollars": 0.0,
+        "csv_path": None,
+    }
+    default_plan_match_config = {
+        "match_formula_name": "50% up to 6%",
+        "match_type": "percent_of_comp",
+        "match_rate": 0.50,
+        "match_cap_pct": 0.06,
+        "match_frequency": "per_payroll",
+        "true_up_enabled": False,
+        "eligible_comp_columns": ["Eligibility Compensation", "Plan Compensation", "Compensation"],
+        "excluded_comp_columns": [],
+        "employee_class_column": "Employee Class",
+        "eligible_classes": [],
+        "excluded_classes": [],
+        "absolute_tolerance": 5.00,
+        "relative_tolerance_pct": 0.15,
+    }
+    plan_match_config = default_plan_match_config
+    if isinstance(plan_rules, dict):
+        supplied_match_config = plan_rules.get("plan_match_config")
+        if isinstance(supplied_match_config, dict):
+            plan_match_config = default_plan_match_config.copy()
+            plan_match_config.update(supplied_match_config)
+    
+    try:
+        if processed_payroll_df is not None and not processed_payroll_df.empty:
+            compensation_match_summary, compensation_match_csv_path = analyze_compensation_match(
+                payroll_df=processed_payroll_df,
+                output_dir=output_dir_path,
+                plan_match_config=plan_match_config,
+                run_id=str(run_id),
+                plan_name=config.plan_name,
+                plan_year=inferred_plan_year,
+            )
+            if compensation_match_csv_path is not None:
+                compensation_match_summary["csv_path"] = str(compensation_match_csv_path)
+                _add_csv_sheet_to_excel(
+                    excel_path=output_dir_path / "reconciliation_report.xlsx",
+                    csv_path=compensation_match_csv_path,
+                    sheet_name="Comp Match Issues",
+                )
+        else:
+            compensation_match_summary["warning"] = (
+                "Compensation match analysis skipped because processed payroll data is empty."
+            )
+    except Exception as exc:
+        print(f"[WARN] Compensation match analysis failed: {exc}")
+        compensation_match_summary["warning"] = f"Compensation match analysis failed: {exc}"
     
     # Build plan exception summary from all analyzer CSV outputs
     # Extract CSV paths from each analyzer summary
@@ -758,6 +889,7 @@ def run_prooflink_engine(
         "eligibility": eligibility_summary.get("csv_path"),
         "comp_402g": comp_402g_summary.get("csv_path"),
         "match": match_summary.get("csv_path"),
+        "compensation_match": compensation_match_summary.get("csv_path"),
     }
     
     try:
@@ -849,6 +981,9 @@ def run_prooflink_engine(
     # Include employer match reasonableness analysis summary
     summary["match_checks"] = match_summary
     
+    # Include compensation definition + match impact analysis summary
+    summary["compensation_match"] = compensation_match_summary
+    
     # Include plan exception summary (aggregated from all analyzers)
     summary["plan_exceptions"] = plan_ex_summary
     
@@ -913,6 +1048,7 @@ def run_prooflink_engine(
         "eligibility": eligibility_summary.get("csv_path"),
         "comp_402g": comp_402g_summary.get("csv_path"),
         "match": match_summary.get("csv_path"),
+        "compensation_match": compensation_match_summary.get("csv_path"),
         "plan_exceptions": plan_ex_summary.get("csv_path"),
     }
     
@@ -958,6 +1094,14 @@ def run_prooflink_engine(
             "name": "Employer match reasonableness issues",
             "category": "Match",
             "path": match_summary["csv_path"],
+        })
+    
+    if compensation_match_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "compensation_match_issues",
+            "name": "Compensation definition and match impact issues",
+            "category": "Compensation/Match",
+            "path": compensation_match_summary["csv_path"],
         })
     
     if plan_ex_summary.get("csv_path"):
@@ -1058,6 +1202,15 @@ def run_prooflink_engine(
     
     # Add evidence_index to summary
     summary["evidence_index"] = evidence_index
+    
+    _ensure_files_in_evidence_pack(
+        evidence_pack_path=evidence_pack_path,
+        file_paths=[
+            compensation_match_summary.get("csv_path"),
+            output_dir_path / "reconciliation_report.xlsx",
+            plan_ex_summary.get("csv_path"),
+        ],
+    )
     
     return EngineResult(
         run_id=run_id,

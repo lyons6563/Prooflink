@@ -23,6 +23,7 @@ def _guess_category_from_source(source_key: str) -> str:
         "eligibility": "Eligibility",
         "comp_402g": "Comp/402(g)",
         "match": "Match",
+        "compensation_match": "Compensation/Match",
     }
     return category_map.get(source_key, "Other")
 
@@ -100,6 +101,29 @@ def _build_details_string(source_key: str, row: pd.Series) -> str:
             details_parts.append(f"er_match_amount=${er_match_amount:.2f}")
         if variance is not None and not pd.isna(variance):
             details_parts.append(f"variance=${variance:.2f}")
+        return ", ".join(details_parts) + "."
+    
+    elif source_key == "compensation_match":
+        eligible_comp = row.get("eligible_comp")
+        excluded_comp = row.get("excluded_comp")
+        expected_match = row.get("expected_match")
+        actual_match = row.get("actual_match")
+        variance = row.get("match_variance")
+        root_cause = row.get("likely_root_cause")
+        
+        details_parts = [f"Compensation/Match issue_type={issue_type}"]
+        if eligible_comp is not None and not pd.isna(eligible_comp):
+            details_parts.append(f"eligible_comp=${eligible_comp:.2f}")
+        if excluded_comp is not None and not pd.isna(excluded_comp):
+            details_parts.append(f"excluded_comp=${excluded_comp:.2f}")
+        if expected_match is not None and not pd.isna(expected_match):
+            details_parts.append(f"expected_match=${expected_match:.2f}")
+        if actual_match is not None and not pd.isna(actual_match):
+            details_parts.append(f"actual_match=${actual_match:.2f}")
+        if variance is not None and not pd.isna(variance):
+            details_parts.append(f"variance=${variance:.2f}")
+        if root_cause is not None and not pd.isna(root_cause):
+            details_parts.append(f"root_cause={root_cause}")
         return ", ".join(details_parts) + "."
     
     else:

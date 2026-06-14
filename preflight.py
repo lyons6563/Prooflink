@@ -200,9 +200,8 @@ def run_preflight(
     report['mapped_fields']['payroll'] = payroll_mapped
     report['mapped_fields']['recordkeeper'] = rk_mapped
     
-    # Strict validation: verify all source headers referenced in mapping exist in CSV headers
-    # For each canonical field in the mapping, check if its example headers exist in the CSV
-    # Collect headers that are referenced in the mapping but don't exist in the CSV
+    # Strict validation: verify required source headers referenced in mapping exist in CSV headers.
+    # Optional fields are allowed to be absent and will be defaulted or skipped downstream.
     missing_payroll_headers = []
     missing_rk_headers = []
     
@@ -210,9 +209,13 @@ def run_preflight(
     normalized_payroll_headers = {normalize_column_name(h) for h in payroll_headers}
     normalized_rk_headers = {normalize_column_name(h) for h in rk_headers}
     
-    # Check payroll: for each canonical field in mapping, verify at least one example header exists
+    required_mapping_fields = {"employee_id"}
+    
+    # Check payroll: for each required canonical field in mapping, verify at least one example header exists
     payroll_file_section = mapping_data.get('payroll', {})
     for field_key, field_data in payroll_file_section.items():
+        if field_key not in required_mapping_fields:
+            continue
         if isinstance(field_data, dict) and 'examples' in field_data:
             examples = field_data.get('examples', [])
             if isinstance(examples, list) and examples:
@@ -229,6 +232,8 @@ def run_preflight(
     # Check recordkeeper: same logic
     rk_file_section = mapping_data.get('recordkeeper', {})
     for field_key, field_data in rk_file_section.items():
+        if field_key not in required_mapping_fields:
+            continue
         if isinstance(field_data, dict) and 'examples' in field_data:
             examples = field_data.get('examples', [])
             if isinstance(examples, list) and examples:

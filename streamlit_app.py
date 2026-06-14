@@ -1093,6 +1093,21 @@ def render_reconciliation_tab():
         "service_days_required": None,
         "age_required": None,
         "align_first_month": False,
+        "plan_match_config": {
+            "match_formula_name": "50% up to 6%",
+            "match_type": "percent_of_comp",
+            "match_rate": 0.50,
+            "match_cap_pct": 0.06,
+            "match_frequency": "per_payroll",
+            "true_up_enabled": False,
+            "eligible_comp_columns": ["Eligibility Compensation", "Plan Compensation", "Compensation"],
+            "excluded_comp_columns": [],
+            "employee_class_column": "Employee Class",
+            "eligible_classes": [],
+            "excluded_classes": [],
+            "absolute_tolerance": 5.00,
+            "relative_tolerance_pct": 0.15,
+        },
     }
 
     # ---------- Vendor Hints ----------
@@ -1152,6 +1167,67 @@ def render_reconciliation_tab():
             "service_days_required": service_days,
             "age_required": age_required,
             "align_first_month": align_first_month,
+        }
+    
+    def _split_csv_text(value: str) -> List[str]:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    
+    with st.expander("Compensation / Match Rules"):
+        match_rate_pct = st.number_input(
+            "Match rate (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=50.0,
+            step=1.0,
+        )
+        match_cap_pct = st.number_input(
+            "Match cap (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=6.0,
+            step=0.5,
+        )
+        match_frequency = st.selectbox(
+            "Match frequency",
+            ["per_payroll", "annual"],
+            index=0,
+        )
+        true_up_enabled = st.checkbox("True-up enabled", value=False)
+        eligible_comp_columns_text = st.text_input(
+            "Eligible compensation columns",
+            value="Eligibility Compensation, Plan Compensation, Compensation",
+        )
+        excluded_comp_columns_text = st.text_input(
+            "Excluded compensation columns",
+            value="",
+        )
+        employee_class_column = st.text_input(
+            "Employee class column",
+            value="Employee Class",
+        )
+        eligible_classes_text = st.text_input(
+            "Eligible classes",
+            value="",
+        )
+        excluded_classes_text = st.text_input(
+            "Excluded classes",
+            value="",
+        )
+        
+        plan_rules["plan_match_config"] = {
+            "match_formula_name": f"{match_rate_pct:g}% up to {match_cap_pct:g}%",
+            "match_type": "percent_of_comp",
+            "match_rate": match_rate_pct / 100.0,
+            "match_cap_pct": match_cap_pct / 100.0,
+            "match_frequency": match_frequency,
+            "true_up_enabled": true_up_enabled,
+            "eligible_comp_columns": _split_csv_text(eligible_comp_columns_text),
+            "excluded_comp_columns": _split_csv_text(excluded_comp_columns_text),
+            "employee_class_column": employee_class_column.strip() or "Employee Class",
+            "eligible_classes": _split_csv_text(eligible_classes_text),
+            "excluded_classes": _split_csv_text(excluded_classes_text),
+            "absolute_tolerance": 5.00,
+            "relative_tolerance_pct": 0.15,
         }
 
     # ---------- Mapping Readiness Check ----------
@@ -1553,6 +1629,42 @@ def render_reconciliation_tab():
                 file_name="eligibility_drift.csv",
                 mime="text/csv",
                 key=f"eligibility_drift_{run_id}",
+            )
+        
+        # Compensation / Match Issues
+        st.divider()
+        st.markdown("### Compensation / Match Issues")
+        
+        comp_match = summary_dict.get("compensation_match") or {}
+        if not isinstance(comp_match, dict):
+            comp_match = {}
+        
+        comp_cols = st.columns(3)
+        comp_cols[0].metric("Issues", f"{comp_match.get('issue_count', 0):,}")
+        comp_cols[1].metric(
+            "Under-match $",
+            f"${float(comp_match.get('estimated_under_match_dollars', 0.0)):,.2f}",
+        )
+        comp_cols[2].metric(
+            "Over-match $",
+            f"${float(comp_match.get('estimated_over_match_dollars', 0.0)):,.2f}",
+        )
+        
+        comp_csv_path = comp_match.get("csv_path")
+        if comp_csv_path and os.path.exists(comp_csv_path):
+            comp_df = pd.read_csv(comp_csv_path)
+            if not comp_df.empty:
+                root_causes = comp_df["likely_root_cause"].value_counts().head(5).reset_index()
+                root_causes.columns = ["likely_root_cause", "count"]
+                st.dataframe(root_causes, use_container_width=True)
+            with open(comp_csv_path, "rb") as f:
+                comp_data = f.read()
+            st.download_button(
+                label="Download compensation/match issues CSV",
+                data=comp_data,
+                file_name="compensation_match_issues.csv",
+                mime="text/csv",
+                key="download_compensation_match_issues",
             )
         
         # Reconciliation Summary (compact)

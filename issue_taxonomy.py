@@ -101,6 +101,47 @@ ISSUE_METADATA_BY_TYPE: Dict[str, IssueMetadata] = {
             "where applicable."
         ),
     },
+    "Under-match from compensation definition variance": {
+        "issue_category": "Compensation/Match",
+        "severity": "High",
+        "correction_hint": (
+            "Review eligible compensation mapping and employer match calculations. "
+            "Recalculate affected participant match using plan compensation rules and "
+            "coordinate correction of any under-credited match amounts."
+        ),
+    },
+    "Over-match from excluded compensation included": {
+        "issue_category": "Compensation/Match",
+        "severity": "Medium",
+        "correction_hint": (
+            "Review excluded compensation treatment in payroll and match calculation logic. "
+            "Confirm whether over-credited match should be corrected under plan procedures."
+        ),
+    },
+    "Match paid to excluded employee class": {
+        "issue_category": "Compensation/Match",
+        "severity": "High",
+        "correction_hint": (
+            "Review employee class eligibility and match source coding. Confirm whether the "
+            "participant class is excluded under plan rules and correct any match paid in error."
+        ),
+    },
+    "Potential annual true-up timing difference": {
+        "issue_category": "Compensation/Match",
+        "severity": "Low",
+        "correction_hint": (
+            "Review annual true-up provisions and year-to-date match calculations before "
+            "treating this per-payroll variance as a correction item."
+        ),
+    },
+    "Compensation source data incomplete": {
+        "issue_category": "Compensation/Match",
+        "severity": "Medium",
+        "correction_hint": (
+            "Review payroll and recordkeeper source files for missing compensation, deferral, "
+            "match, or employee class fields before relying on match variance results."
+        ),
+    },
 }
 
 
