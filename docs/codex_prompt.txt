@@ -1,0 +1,9 @@
+Implement the Compensation Definition + Match Impact Auditor described in docs/compensation_match_auditor_spec.md.
+
+Keep the implementation deterministic and evidence-pack compatible. Do not add AI narrative, plan document parsing, external integrations, SaaS billing, or unrelated dashboard work.
+
+Start by adding a standalone analyzer module with tests. Then wire it into main.py summary output, evidence_index, evidence pack, Excel report, and Streamlit rule inputs only after the analyzer tests pass.
+
+Preserve existing reconciliation, timing, Secure 2.0, eligibility, 402(g), and run history behavior.
+
+Add tests for correct match, under-match from missing compensation, over-match from excluded compensation included, excluded class match, annual true-up handling, and incomplete source data.
