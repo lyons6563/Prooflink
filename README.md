@@ -16,6 +16,18 @@ Prooflink ingests payroll and recordkeeper CSV exports, normalizes them across v
 
 Outputs go to a timestamped run directory. All CSVs and the Excel report are bundled into a ZIP with a SHA-256 manifest so the evidence pack can be independently verified without database access.
 
+## Next strategic build
+
+The next high-value feature is the **Compensation Definition + Match Impact Auditor**, documented in:
+
+```text
+docs/compensation_match_auditor_spec.md
+```
+
+This feature should turn Prooflink from a reconciliation utility into a payroll compensation control layer. The goal is to detect whether compensation is being interpreted correctly under plan rules, quantify employer-match impact, identify likely root cause, and produce an audit-ready Payroll Compensation Integrity Report.
+
+Keep this build deterministic and evidence-pack compatible. Do not turn it into a generic AI chatbot, plan document parser, or broad compliance dashboard.
+
 ## Stack
 
 - Python 3.10+
@@ -39,6 +51,7 @@ eligibility_drift_analyzer.py
 comp_402g_analyzer.py
 match_reasonableness_analyzer.py
 plan_exception_summary.py
+docs/                          # product and implementation specs
 tests/                          # pytest test suite
 inputs/                         # place payroll + RK CSVs here
 data/processed/                 # engine output (overwritten each run)
