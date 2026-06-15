@@ -1786,9 +1786,6 @@ def render_reconciliation_tab():
 
 
 def render_buyer_demo_tab():
-    def split_csv_text(value: str) -> List[str]:
-        return [item.strip() for item in value.split(",") if item.strip()]
-
     def read_file_bytes(uploaded_file) -> bytes:
         if hasattr(uploaded_file, "getvalue"):
             return uploaded_file.getvalue()
@@ -1806,6 +1803,17 @@ def render_buyer_demo_tab():
 
     def is_comp_match_demo(filename: str) -> bool:
         return "demo_comp_match_payroll.csv" in (filename or "")
+
+    def read_payroll_preview(uploaded_file) -> pd.DataFrame:
+        if uploaded_file is None:
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(io.BytesIO(read_file_bytes(uploaded_file)))
+        except Exception:
+            return pd.DataFrame()
+
+    def existing_columns(columns: List[str], preferred: List[str]) -> List[str]:
+        return [column for column in preferred if column in columns]
 
     def mapping_for_file(payroll_filename: str, demo_selected: bool) -> Path:
         if is_comp_match_demo(payroll_filename):
@@ -1838,7 +1846,7 @@ def render_buyer_demo_tab():
 
     st.markdown("### Step 1: Upload payroll + recordkeeper files")
     use_demo = st.checkbox(
-        "Use compensation/match demo files",
+        "Use Compensation/Match Demo",
         value=False,
         help="Loads demo files that show under-match, over-match, excluded class match, and true-up timing examples.",
     )
@@ -1865,6 +1873,8 @@ def render_buyer_demo_tab():
     payroll_filename = getattr(payroll_file, "name", "") if payroll_file else ""
     rk_filename = getattr(rk_file, "name", "") if rk_file else ""
     mapping_path = mapping_for_file(payroll_filename, use_demo)
+    payroll_preview_df = read_payroll_preview(payroll_file)
+    payroll_columns = list(payroll_preview_df.columns)
 
     st.markdown("### Step 2: Confirm mapping")
     preflight_safe = False
@@ -1911,14 +1921,21 @@ def render_buyer_demo_tab():
 
     st.markdown("### Step 3: Enter/confirm plan rules")
     demo_defaults = is_comp_match_demo(payroll_filename)
-    eligible_default = (
-        "Regular Compensation, Overtime, Bonus"
-        if demo_defaults
-        else "Eligibility Compensation, Plan Compensation, Compensation"
+    default_eligible_columns = existing_columns(
+        payroll_columns,
+        (
+            ["Regular Compensation", "Overtime", "Bonus"]
+            if demo_defaults
+            else ["Eligibility Compensation", "Plan Compensation", "Compensation"]
+        ),
     )
-    excluded_default = "Fringe, Reimbursement" if demo_defaults else ""
-    eligible_classes_default = "Full-Time, Part-Time" if demo_defaults else ""
-    excluded_classes_default = "Intern, Union Excluded" if demo_defaults else ""
+    default_excluded_columns = existing_columns(
+        payroll_columns,
+        ["Fringe", "Reimbursement"] if demo_defaults else [],
+    )
+    default_employee_class_column = "Employee Class" if "Employee Class" in payroll_columns else (
+        payroll_columns[0] if payroll_columns else ""
+    )
 
     plan_name = st.text_input(
         "Plan name",
@@ -1943,11 +1960,67 @@ def render_buyer_demo_tab():
     true_up_enabled = rule_cols[3].checkbox("True-up enabled", value=False)
 
     with st.expander("Compensation and employee class rule details", expanded=demo_defaults):
-        eligible_comp_columns_text = st.text_input("Eligible compensation columns", value=eligible_default)
-        excluded_comp_columns_text = st.text_input("Excluded compensation columns", value=excluded_default)
-        employee_class_column = st.text_input("Employee class column", value="Employee Class")
-        eligible_classes_text = st.text_input("Eligible classes", value=eligible_classes_default)
-        excluded_classes_text = st.text_input("Excluded classes", value=excluded_classes_default)
+        if payroll_columns:
+            eligible_comp_columns = st.multiselect(
+                "Eligible compensation columns",
+                options=payroll_columns,
+                default=default_eligible_columns,
+            )
+            excluded_comp_columns = st.multiselect(
+                "Excluded compensation columns",
+                options=payroll_columns,
+                default=default_excluded_columns,
+            )
+            employee_class_index = (
+                payroll_columns.index(default_employee_class_column)
+                if default_employee_class_column in payroll_columns
+                else 0
+            )
+            employee_class_column = st.selectbox(
+                "Employee class column",
+                options=payroll_columns,
+                index=employee_class_index,
+            )
+
+            class_values: List[str] = []
+            if employee_class_column in payroll_preview_df.columns:
+                class_values = sorted(
+                    value
+                    for value in payroll_preview_df[employee_class_column]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                    if value
+                )
+            default_eligible_classes = [
+                value
+                for value in (["Full-Time", "Part-Time"] if demo_defaults else class_values)
+                if value in class_values
+            ]
+            default_excluded_classes = [
+                value
+                for value in (["Intern", "Union Excluded"] if demo_defaults else [])
+                if value in class_values
+            ]
+            eligible_classes = st.multiselect(
+                "Eligible classes",
+                options=class_values,
+                default=default_eligible_classes,
+            )
+            excluded_classes = st.multiselect(
+                "Excluded classes",
+                options=class_values,
+                default=default_excluded_classes,
+            )
+        else:
+            st.info("Upload a payroll file to choose compensation and employee class fields.")
+            eligible_comp_columns = default_eligible_columns
+            excluded_comp_columns = default_excluded_columns
+            employee_class_column = default_employee_class_column or "Employee Class"
+            eligible_classes = []
+            excluded_classes = []
 
     with st.expander("Advanced vendor hints", expanded=False):
         payroll_vendor_hint = st.selectbox(
@@ -1990,11 +2063,11 @@ def render_buyer_demo_tab():
             "match_frequency": match_frequency,
             "true_up_enabled": true_up_enabled,
             "true_up_enabled_column": "True-Up Enabled",
-            "eligible_comp_columns": split_csv_text(eligible_comp_columns_text),
-            "excluded_comp_columns": split_csv_text(excluded_comp_columns_text),
-            "employee_class_column": employee_class_column.strip() or "Employee Class",
-            "eligible_classes": split_csv_text(eligible_classes_text),
-            "excluded_classes": split_csv_text(excluded_classes_text),
+            "eligible_comp_columns": eligible_comp_columns,
+            "excluded_comp_columns": excluded_comp_columns,
+            "employee_class_column": employee_class_column or "Employee Class",
+            "eligible_classes": eligible_classes,
+            "excluded_classes": excluded_classes,
             "absolute_tolerance": 5.00,
             "relative_tolerance_pct": 0.15,
         },
