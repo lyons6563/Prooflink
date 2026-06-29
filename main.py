@@ -585,6 +585,8 @@ def run_prooflink_engine(
         rk_vendor_hint=config.rk_vendor_hint,
         output_dir=config.output_dir,
         proofs_dir=config.proofs_dir,
+        run_id=str(run_id),
+        plan_name=config.plan_name,
     )
     
     # Get the evidence pack path from results
@@ -1324,6 +1326,8 @@ def run_reconciliation(
     output_dir: str = "data/processed",
     proofs_dir: str = "proofs",
     mapping_yaml_path: str | None = None,
+    run_id: str | None = None,
+    plan_name: str | None = None,
 ) -> dict:
     """
     Execute a full ProofLink reconciliation run for the given payroll + RK CSVs.
@@ -1739,11 +1743,16 @@ def run_reconciliation(
         "csv_path": None,
     }
     population_validation_path = None
+    population_validation_plan_name = plan_name or cfg.get("plan_name")
+    population_validation_plan_year = _infer_plan_year_from_payroll(p)
     try:
         population_validation_summary, population_validation_csv_path = analyze_population_validation(
             payroll_df=p,
             recordkeeper_df=r,
             output_dir=output_dir_path,
+            run_id=run_id,
+            plan_name=population_validation_plan_name,
+            plan_year=population_validation_plan_year,
         )
         if population_validation_csv_path is not None:
             population_validation_path = Path(population_validation_csv_path)

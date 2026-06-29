@@ -215,6 +215,9 @@ def test_population_validation_engine_outputs_corrected_exceptions(tmp_path: Pat
     assert set(issues["issue_category"]) == {"Population Validation"}
     assert set(issues["authoritative_source"]) == {"undetermined"}
     assert set(issues["suspected_origin"]) == {"undetermined"}
+    assert set(issues["run_id"]) == {"population-validation-test"}
+    assert set(issues["plan_name"]) == {"Population Demo Plan"}
+    assert set(issues["plan_year"]) == {2025}
 
     assert result.summary["plan_exceptions"]["by_category"]["Population Validation"] == 2
     assert any(item.get("key") == "population_validation_issues" for item in result.summary.get("evidence_index", []))
