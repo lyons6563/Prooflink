@@ -38,9 +38,12 @@ from match_reasonableness_analyzer import analyze_match_reasonableness
 
 from compensation_match_auditor import analyze_compensation_match
 
+from population_validation_analyzer import analyze_population_validation
+
 from plan_exception_summary import build_plan_exception_summary
 
 from preflight import run_preflight
+
 
 
 @dataclass
@@ -338,6 +341,7 @@ def _compute_weighted_violations(by_category: Dict[str, int]) -> int:
         "Comp/402(g)": 3,
         "Match": 2,
         "Compensation/Match": 3,
+        "Population Validation": 2,
         "Timing": 1,
         "Other": 1,
     }
@@ -435,6 +439,48 @@ def _add_csv_sheet_to_excel(
             df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
     except Exception as exc:
         print(f"[WARN] Could not add {sheet_name} sheet to Excel report: {exc}")
+
+
+def _manifest_output_entry(output_path: Union[str, Path]) -> Dict[str, Any]:
+    """Build a manifest output entry using the existing integrity metadata schema."""
+    output_path = Path(output_path)
+    entry = {
+        "path": output_path.name,
+        "sha256": sha256_file(output_path),
+    }
+    if output_path.suffix == ".csv":
+        entry.update(hash_csv_rows(output_path))
+    return entry
+
+
+def _add_output_to_manifest(
+    manifest_path: Optional[Union[str, Path]],
+    logical_name: str,
+    output_path: Optional[Union[str, Path]],
+) -> Dict[str, Any]:
+    """Add a late-created output to the existing proof manifest."""
+    if not manifest_path or not output_path:
+        return {}
+
+    manifest_path = Path(manifest_path)
+    output_path = Path(output_path)
+    if not manifest_path.exists() or not output_path.exists():
+        return {}
+
+    try:
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        manifest.setdefault("outputs", {})[logical_name] = _manifest_output_entry(output_path)
+
+        temp_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+        with temp_path.open("w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        temp_path.replace(manifest_path)
+        return manifest
+    except Exception as exc:
+        print(f"[WARN] Could not update proof manifest with {logical_name}: {exc}")
+        return {}
 
 
 def _ensure_files_in_evidence_pack(
@@ -881,6 +927,24 @@ def run_prooflink_engine(
     except Exception as exc:
         print(f"[WARN] Compensation match analysis failed: {exc}")
         compensation_match_summary["warning"] = f"Compensation match analysis failed: {exc}"
+
+    # Use population validation results produced during reconciliation.
+    population_validation_summary = reconciliation_results.get("population_validation_summary")
+    if not isinstance(population_validation_summary, dict):
+        population_validation_summary = {
+            "payroll_employee_count": 0,
+            "recordkeeper_employee_count": 0,
+            "common_employee_count": 0,
+            "issue_count": 0,
+            "employment_status_conflict_count": 0,
+            "post_termination_compensation_count": 0,
+            "skipped_rules": {},
+            "csv_path": None,
+            "warning": "Population validation results were not returned by reconciliation.",
+        }
+    population_validation_csv_path = reconciliation_results.get("population_validation")
+    if population_validation_csv_path:
+        population_validation_summary["csv_path"] = population_validation_csv_path
     
     # Build plan exception summary from all analyzer CSV outputs
     # Extract CSV paths from each analyzer summary
@@ -890,6 +954,7 @@ def run_prooflink_engine(
         "comp_402g": comp_402g_summary.get("csv_path"),
         "match": match_summary.get("csv_path"),
         "compensation_match": compensation_match_summary.get("csv_path"),
+        "population_validation": population_validation_summary.get("csv_path"),
     }
     
     try:
@@ -984,6 +1049,9 @@ def run_prooflink_engine(
     # Include compensation definition + match impact analysis summary
     summary["compensation_match"] = compensation_match_summary
     
+    # Include population validation analysis summary
+    summary["population_validation"] = population_validation_summary
+    
     # Include plan exception summary (aggregated from all analyzers)
     summary["plan_exceptions"] = plan_ex_summary
     
@@ -1049,6 +1117,7 @@ def run_prooflink_engine(
         "comp_402g": comp_402g_summary.get("csv_path"),
         "match": match_summary.get("csv_path"),
         "compensation_match": compensation_match_summary.get("csv_path"),
+        "population_validation": population_validation_summary.get("csv_path"),
         "plan_exceptions": plan_ex_summary.get("csv_path"),
     }
     
@@ -1060,6 +1129,23 @@ def run_prooflink_engine(
             plan_year=inferred_plan_year,
         )
     
+    if population_validation_summary.get("csv_path"):
+        updated_manifest = _add_output_to_manifest(
+            manifest_path=manifest_path,
+            logical_name="population_validation_issues",
+            output_path=population_validation_summary.get("csv_path"),
+        )
+        if updated_manifest:
+            manifest = updated_manifest
+
+    updated_manifest = _add_output_to_manifest(
+        manifest_path=manifest_path,
+        logical_name="excel_report",
+        output_path=output_dir_path / "reconciliation_report.xlsx",
+    )
+    if updated_manifest:
+        manifest = updated_manifest
+
     # Build evidence index listing all key artifacts produced during this run
     evidence_index = []
     
@@ -1102,6 +1188,14 @@ def run_prooflink_engine(
             "name": "Compensation definition and match impact issues",
             "category": "Compensation/Match",
             "path": compensation_match_summary["csv_path"],
+        })
+    
+    if population_validation_summary.get("csv_path"):
+        evidence_index.append({
+            "key": "population_validation_issues",
+            "name": "Population validation issues",
+            "category": "Population Validation",
+            "path": population_validation_summary["csv_path"],
         })
     
     if plan_ex_summary.get("csv_path"):
@@ -1207,6 +1301,8 @@ def run_prooflink_engine(
         evidence_pack_path=evidence_pack_path,
         file_paths=[
             compensation_match_summary.get("csv_path"),
+            population_validation_summary.get("csv_path"),
+            manifest_path,
             output_dir_path / "reconciliation_report.xlsx",
             plan_ex_summary.get("csv_path"),
         ],
@@ -1631,6 +1727,38 @@ def run_reconciliation(
     # Excel report + proof manifest
     # =========================
     outputs = generate_excel_report()
+
+    population_validation_summary = {
+        "payroll_employee_count": 0,
+        "recordkeeper_employee_count": 0,
+        "common_employee_count": 0,
+        "issue_count": 0,
+        "employment_status_conflict_count": 0,
+        "post_termination_compensation_count": 0,
+        "skipped_rules": {},
+        "csv_path": None,
+    }
+    population_validation_path = None
+    try:
+        population_validation_summary, population_validation_csv_path = analyze_population_validation(
+            payroll_df=p,
+            recordkeeper_df=r,
+            output_dir=output_dir_path,
+        )
+        if population_validation_csv_path is not None:
+            population_validation_path = Path(population_validation_csv_path)
+            population_validation_summary["csv_path"] = str(population_validation_path)
+            _add_csv_sheet_to_excel(
+                excel_path=output_dir_path / "reconciliation_report.xlsx",
+                csv_path=population_validation_path,
+                sheet_name="Population Issues",
+            )
+            outputs["population_validation_issues"] = _manifest_output_entry(population_validation_path)
+            outputs["excel_report"] = _manifest_output_entry(output_dir_path / "reconciliation_report.xlsx")
+    except Exception as exc:
+        print(f"[WARN] Population validation failed: {exc}")
+        population_validation_summary["warning"] = f"Population validation failed: {exc}"
+
     manifest_path = write_proof_manifest(
         payroll_file=payroll_path,
         rk_file=rk_path,
@@ -1716,6 +1844,7 @@ def run_reconciliation(
         "timing": timing,
         "secure20_exceptions": secure20_exceptions,
         "eligibility_drift_count": eligibility_drift_count,
+        "population_validation_summary": population_validation_summary,
     }
     
     # Add Secure 2.0 exceptions CSV path if file was created
@@ -1724,6 +1853,9 @@ def run_reconciliation(
     
     # Add eligibility drift CSV path if file was created
     results["eligibility_drift"] = str(eligibility_drift_path) if eligibility_drift_path else None
+
+    if population_validation_path is not None:
+        results["population_validation"] = str(population_validation_path)
 
     # Run timing analysis and add results
     try:
@@ -1801,6 +1933,7 @@ def build_evidence_pack(results: dict) -> Path:
         "late_contributions",
         "timing_summary",
         "eligibility_drift",
+        "population_validation",
     ]
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:

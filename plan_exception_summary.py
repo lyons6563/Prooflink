@@ -24,6 +24,7 @@ def _guess_category_from_source(source_key: str) -> str:
         "comp_402g": "Comp/402(g)",
         "match": "Match",
         "compensation_match": "Compensation/Match",
+        "population_validation": "Population Validation",
     }
     return category_map.get(source_key, "Other")
 
@@ -101,6 +102,30 @@ def _build_details_string(source_key: str, row: pd.Series) -> str:
             details_parts.append(f"er_match_amount=${er_match_amount:.2f}")
         if variance is not None and not pd.isna(variance):
             details_parts.append(f"variance=${variance:.2f}")
+        return ", ".join(details_parts) + "."
+    
+    elif source_key == "population_validation":
+        exception_type = row.get("exception_type", issue_type)
+        mismatch_location = row.get("mismatch_location")
+        reference_source = row.get("reference_source")
+        rk_term_date = row.get("recordkeeper_termination_date")
+        payroll_date = row.get("later_payroll_date")
+        comp_amount = row.get("post_termination_compensation_amount")
+        days_after = row.get("days_after_termination")
+
+        details_parts = [f"Population Validation exception_type={exception_type}"]
+        if mismatch_location is not None and not pd.isna(mismatch_location):
+            details_parts.append(f"mismatch_location={mismatch_location}")
+        if reference_source is not None and not pd.isna(reference_source):
+            details_parts.append(f"reference_source={reference_source}")
+        if rk_term_date is not None and not pd.isna(rk_term_date):
+            details_parts.append(f"rk_termination_date={rk_term_date}")
+        if payroll_date is not None and not pd.isna(payroll_date):
+            details_parts.append(f"payroll_date={payroll_date}")
+        if comp_amount is not None and not pd.isna(comp_amount):
+            details_parts.append(f"compensation_amount={float(comp_amount):.2f}")
+        if days_after is not None and not pd.isna(days_after):
+            details_parts.append(f"days_after_termination={days_after}")
         return ", ".join(details_parts) + "."
     
     elif source_key == "compensation_match":
