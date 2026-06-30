@@ -1,0 +1,50 @@
+{
+  "dataset_name": "ProofLink realistic 25-employee synthetic demo",
+  "employee_count": 25,
+  "files": {
+    "ground_truth": {
+      "path": "realistic_smoke_25_ground_truth.csv",
+      "sha256": "eb72df91ac86e441c1d8774697071f48775773b2c66355f6fe7ee24fd0f9b30c"
+    },
+    "mapping": {
+      "path": "realistic_smoke_25_mapping.yaml",
+      "sha256": "492fe8d5cb4a034e9368cf4787892accdce7cfd874ee36b3055d8498f980ab64"
+    },
+    "payroll": {
+      "path": "realistic_smoke_25_payroll.csv",
+      "sha256": "5063eb330c62bf39efbc91fd9a8a1cf9127a76a41dffd1d089cd87349f4fc317"
+    },
+    "recordkeeper": {
+      "path": "realistic_smoke_25_recordkeeper.csv",
+      "sha256": "6407753505b23d96f182809a52bbb6d28208616d6627316aa6e565db55d80330"
+    }
+  },
+  "generated_at_utc": "2025-06-30T00:00:00Z",
+  "ground_truth_row_count": 12,
+  "pay_period_end": "2025-02-14",
+  "pay_period_start": "2025-01-03",
+  "payroll_period_count": 4,
+  "payroll_row_count": 100,
+  "recordkeeper_row_count": 97,
+  "scenario_counts": {
+    "COMP_MATCH_OVER": 1,
+    "COMP_MATCH_UNDER": 1,
+    "DEFERRAL_MISMATCH": 1,
+    "EMPLOYMENT_STATUS_CONFLICT": 1,
+    "EXCESS_402G": 1,
+    "EXCLUDED_CLASS_MATCH": 1,
+    "LATE_CONTRIBUTION": 1,
+    "LOAN_MISMATCH": 1,
+    "ONLY_IN_PAYROLL": 1,
+    "ONLY_IN_RECORDKEEPER": 1,
+    "POST_TERMINATION_COMPENSATION": 1,
+    "SECURE20_HCE_PRETAX_CATCHUP": 1
+  },
+  "schema_notes": {
+    "ground_truth": "Documents deliberately planted exceptions. future_only=false means the current engine has a relevant analyzer or output surface.",
+    "payroll": "Canonical ProofLink columns plus demographics, compensation components, status, hire, termination, and rehire fields.",
+    "recordkeeper": "Canonical contribution columns plus recordkeeper status and termination date fields used by population validation."
+  },
+  "seed": 20250630,
+  "year": 2025
+}

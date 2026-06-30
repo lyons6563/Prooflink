@@ -77,3 +77,9 @@ data/demo/population_output/
 data/demo/population_proofs/
 data/demo/population_validation_demo_payroll.csv
 data/demo/population_validation_demo_rk.csv
+
+# Realistic demo generated heavy inputs and run artifacts
+data/demo/realistic_500_payroll.csv
+data/demo/realistic_500_recordkeeper.csv
+data/demo/realistic_500_output/
+data/demo/realistic_500_proofs/
