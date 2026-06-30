@@ -511,6 +511,20 @@ def normalize_payroll(df: pd.DataFrame, vendor: str, vendor_confidence: float = 
             out["pay_date"] = pd.to_datetime(df[pay_date_col], errors="coerce")
         else:
             out["pay_date"] = pd.NaT
+
+        period_col = None
+        for col_name in ["pay_period_number", "pay_period", "period_number", "pay period number", "pay period"]:
+            if col_name in df.columns:
+                period_col = col_name
+                break
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    period_col = col
+                    break
+            if period_col:
+                break
+        if period_col:
+            out["pay_period"] = df[period_col]
         
         # Use normalized column names from normalize_column_names() or canonical aliases
         # Check for canonical names first, then fall back to vendor-specific names
@@ -666,6 +680,34 @@ def normalize_rk(df: pd.DataFrame, vendor: str, vendor_confidence: float = 0.0) 
         else:
             print("[WARN] deposit_date column not found in RK. Late contribution detection may be limited.")
             out["deposit_date"] = pd.NaT
+
+        pay_date_col = None
+        for col_name in ["pay_date", "pay date", "payroll_date", "payroll date", "check_date", "check date"]:
+            if col_name in df.columns:
+                pay_date_col = col_name
+                break
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    pay_date_col = col
+                    break
+            if pay_date_col:
+                break
+        if pay_date_col:
+            out["pay_date"] = pd.to_datetime(df[pay_date_col], errors="coerce")
+
+        period_col = None
+        for col_name in ["pay_period_number", "pay_period", "period_number", "pay period number", "pay period"]:
+            if col_name in df.columns:
+                period_col = col_name
+                break
+            for col in df.columns:
+                if col.lower().strip() == col_name.lower():
+                    period_col = col
+                    break
+            if period_col:
+                break
+        if period_col:
+            out["pay_period"] = df[period_col]
         
         # Use normalized column names from normalize_column_names() or canonical aliases
         # Check for canonical names first, then fall back to vendor-specific names
@@ -806,46 +848,250 @@ def business_days_between(start: pd.Series, end: pd.Series) -> pd.Series:
     return delta_days
 
 
-def compute_late_contributions(payroll_df: pd.DataFrame,
-                               rk_df: pd.DataFrame,
-                               late_threshold_days: int = 5) -> pd.DataFrame:
-    payroll_df = payroll_df.copy()
-    rk_df = rk_df.copy()
+def _ensure_timing_columns(df: pd.DataFrame, role: str) -> pd.DataFrame:
+    df = df.copy()
+    if "employee_id" in df.columns:
+        df["employee_id"] = df["employee_id"].astype(str).str.strip()
 
-    payroll_df["pay_total"] = (
-        payroll_df["payroll_pretax"]
-        + payroll_df["payroll_roth"]
-        + payroll_df["payroll_loan"]
+    if role == "payroll":
+        amount_cols = ["payroll_pretax", "payroll_roth", "payroll_loan"]
+        for col in amount_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        if "pay_date" not in df.columns:
+            df["pay_date"] = pd.NaT
+        df["pay_date"] = pd.to_datetime(df["pay_date"], errors="coerce")
+        df["pay_total"] = df[amount_cols].sum(axis=1)
+        df["_payroll_row_count"] = 1
+        df["_payroll_source_index"] = range(len(df))
+    else:
+        amount_cols = ["rk_pretax", "rk_roth", "rk_loan"]
+        for col in amount_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        if "deposit_date" not in df.columns:
+            df["deposit_date"] = pd.NaT
+        df["deposit_date"] = pd.to_datetime(df["deposit_date"], errors="coerce")
+        if "pay_date" in df.columns:
+            df["pay_date"] = pd.to_datetime(df["pay_date"], errors="coerce")
+        df["rk_total"] = df[amount_cols].sum(axis=1)
+        df["_rk_row_count"] = 1
+        df["_rk_source_index"] = range(len(df))
+
+    if "employee_id" not in df.columns:
+        df["employee_id"] = ""
+    return df
+
+
+def _aggregate_payroll(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
+    agg = {
+        "pay_date": "min",
+        "payroll_pretax": "sum",
+        "payroll_roth": "sum",
+        "payroll_loan": "sum",
+        "pay_total": "sum",
+        "_payroll_row_count": "sum",
+    }
+    if "_payroll_source_index" not in key_cols:
+        agg["_payroll_source_index"] = "min"
+    grouped = df.groupby(key_cols, dropna=False, as_index=False).agg(agg)
+    sort_cols = list(dict.fromkeys(key_cols + ["_payroll_source_index"]))
+    return grouped.sort_values(sort_cols).reset_index(drop=True)
+
+
+def _aggregate_rk(df: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
+    agg = {
+        "deposit_date": "min",
+        "rk_pretax": "sum",
+        "rk_roth": "sum",
+        "rk_loan": "sum",
+        "rk_total": "sum",
+        "_rk_row_count": "sum",
+    }
+    if "_rk_source_index" not in key_cols:
+        agg["_rk_source_index"] = "min"
+    if "pay_date" in df.columns and "pay_date" not in key_cols:
+        agg["pay_date"] = "min"
+    grouped = df.groupby(key_cols, dropna=False, as_index=False).agg(agg)
+    sort_cols = list(dict.fromkeys(key_cols + ["_rk_source_index"]))
+    return grouped.sort_values(sort_cols).reset_index(drop=True)
+
+
+def _finalize_timing_result(
+    merged: pd.DataFrame,
+    match_rule: str,
+    late_threshold_days: int,
+) -> pd.DataFrame:
+    if "pay_date_payroll" in merged.columns:
+        merged["pay_date"] = merged["pay_date_payroll"]
+    elif "pay_date" not in merged.columns:
+        merged["pay_date"] = pd.NaT
+
+    merged["pay_date"] = pd.to_datetime(merged["pay_date"], errors="coerce")
+    merged["deposit_date"] = pd.to_datetime(merged.get("deposit_date"), errors="coerce")
+    merged["days_to_deposit"] = business_days_between(merged["pay_date"], merged["deposit_date"])
+
+    payroll_present = merged.get("_payroll_row_count", pd.Series(0, index=merged.index)).fillna(0).astype(float) > 0
+    rk_present = merged.get("_rk_row_count", pd.Series(0, index=merged.index)).fillna(0).astype(float) > 0
+
+    merged["missing_deposit"] = payroll_present & ~rk_present
+    merged["unmatched_recordkeeper"] = rk_present & ~payroll_present
+    merged["unmatched_source"] = ""
+    merged.loc[merged["missing_deposit"], "unmatched_source"] = "payroll_only"
+    merged.loc[merged["unmatched_recordkeeper"], "unmatched_source"] = "recordkeeper_only"
+    merged["is_late"] = payroll_present & rk_present & (
+        merged["days_to_deposit"] > late_threshold_days
     )
+    merged["timing_match_rule"] = match_rule
 
-    rk_df["rk_total"] = (
-        rk_df["rk_pretax"]
-        + rk_df["rk_roth"]
-        + rk_df["rk_loan"]
-    )
+    for col in ["payroll_pretax", "payroll_roth", "payroll_loan", "pay_total", "rk_pretax", "rk_roth", "rk_loan", "rk_total"]:
+        if col not in merged.columns:
+            merged[col] = 0.0
+        merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0.0)
 
-    # Defensive: ensure employee_id is normalized before merge
-    if "employee_id" in payroll_df.columns:
-        payroll_df["employee_id"] = payroll_df["employee_id"].astype(str).str.strip()
-    if "employee_id" in rk_df.columns:
-        rk_df["employee_id"] = rk_df["employee_id"].astype(str).str.strip()
+    preferred = [
+        "employee_id", "pay_date", "payroll_pretax", "payroll_roth", "payroll_loan", "pay_total",
+        "deposit_date", "rk_pretax", "rk_roth", "rk_loan", "rk_total", "days_to_deposit",
+        "is_late", "missing_deposit", "unmatched_recordkeeper", "unmatched_source",
+        "timing_match_rule", "_payroll_row_count", "_rk_row_count",
+    ]
+    remaining = [col for col in merged.columns if col not in preferred and not col.endswith("_rk")]
+    return merged[[col for col in preferred if col in merged.columns] + remaining]
 
-    merged = payroll_df.merge(
-        rk_df,
-        on=["employee_id"],
-        how="left",
+
+def _match_on_exact_pay_date(
+    payroll_df: pd.DataFrame,
+    rk_df: pd.DataFrame,
+    late_threshold_days: int,
+) -> pd.DataFrame:
+    payroll = payroll_df.copy()
+    rk = rk_df.copy()
+    payroll["_match_pay_date"] = payroll["pay_date"].dt.normalize()
+    rk["_match_pay_date"] = rk["pay_date"].dt.normalize()
+
+    payroll_valid = payroll[payroll["_match_pay_date"].notna()].copy()
+    rk_valid = rk[rk["_match_pay_date"].notna()].copy()
+    payroll_invalid = payroll[payroll["_match_pay_date"].isna()].copy()
+    rk_invalid = rk[rk["_match_pay_date"].isna()].copy()
+
+    p_agg = _aggregate_payroll(payroll_valid, ["employee_id", "_match_pay_date"])
+    r_agg = _aggregate_rk(rk_valid, ["employee_id", "_match_pay_date"])
+    merged = p_agg.merge(
+        r_agg,
+        on=["employee_id", "_match_pay_date"],
+        how="outer",
         suffixes=("_payroll", "_rk"),
     )
 
-    merged["days_to_deposit"] = business_days_between(
-        merged["pay_date"],
-        merged["deposit_date"],
+    extras = []
+    if not payroll_invalid.empty:
+        extras.append(_aggregate_payroll(payroll_invalid, ["employee_id", "_payroll_source_index"]))
+    if not rk_invalid.empty:
+        extras.append(_aggregate_rk(rk_invalid, ["employee_id", "_rk_source_index"]))
+    if extras:
+        merged = pd.concat([merged] + extras, ignore_index=True, sort=False)
+
+    return _finalize_timing_result(
+        merged,
+        "employee_id+pay_date",
+        late_threshold_days,
     )
 
-    merged["is_late"] = merged["days_to_deposit"] > late_threshold_days
-    merged["missing_deposit"] = merged["deposit_date"].isna()
 
-    return merged
+def _match_on_pay_period(
+    payroll_df: pd.DataFrame,
+    rk_df: pd.DataFrame,
+    late_threshold_days: int,
+) -> pd.DataFrame:
+    p_agg = _aggregate_payroll(payroll_df, ["employee_id", "pay_period"])
+    r_agg = _aggregate_rk(rk_df, ["employee_id", "pay_period"])
+    merged = p_agg.merge(
+        r_agg,
+        on=["employee_id", "pay_period"],
+        how="outer",
+        suffixes=("_payroll", "_rk"),
+    )
+    return _finalize_timing_result(
+        merged,
+        "employee_id+pay_period",
+        late_threshold_days,
+    )
+
+
+def _nearest_deposit_match(
+    payroll_df: pd.DataFrame,
+    rk_df: pd.DataFrame,
+    late_threshold_days: int,
+    matching_window_days: int = 45,
+) -> pd.DataFrame:
+    rows = []
+    for employee_id in sorted(set(payroll_df["employee_id"]) | set(rk_df["employee_id"])):
+        payroll_rows = payroll_df[payroll_df["employee_id"] == employee_id].sort_values(["pay_date", "_payroll_source_index"]).to_dict("records")
+        rk_rows = rk_df[rk_df["employee_id"] == employee_id].sort_values(["deposit_date", "_rk_source_index"]).to_dict("records")
+        used_rk = set()
+
+        for p_row in payroll_rows:
+            pay_date = p_row.get("pay_date")
+            candidates = []
+            if pd.notna(pay_date):
+                for idx, r_row in enumerate(rk_rows):
+                    if idx in used_rk or pd.isna(r_row.get("deposit_date")):
+                        continue
+                    delta = int((r_row["deposit_date"].normalize() - pay_date.normalize()).days)
+                    if 0 <= delta <= matching_window_days:
+                        candidates.append((delta, r_row.get("_rk_source_index", idx), idx, r_row))
+            if candidates:
+                _, _, idx, r_row = sorted(candidates)[0]
+                used_rk.add(idx)
+                rows.append({**p_row, **{f"{k}_rk" if k in p_row and k != "employee_id" else k: v for k, v in r_row.items()}})
+            else:
+                rows.append(p_row)
+
+        for idx, r_row in enumerate(rk_rows):
+            if idx not in used_rk:
+                rows.append(r_row)
+
+    merged = pd.DataFrame(rows)
+    if "deposit_date_rk" in merged.columns and "deposit_date" not in merged.columns:
+        merged["deposit_date"] = merged["deposit_date_rk"]
+    for col in ["rk_pretax", "rk_roth", "rk_loan", "rk_total", "_rk_row_count", "_rk_source_index"]:
+        rk_col = f"{col}_rk"
+        if rk_col in merged.columns and col not in merged.columns:
+            merged[col] = merged[rk_col]
+    return _finalize_timing_result(
+        merged,
+        "employee_id+nearest_deposit_date",
+        late_threshold_days,
+    )
+
+
+def compute_late_contributions(payroll_df: pd.DataFrame,
+                               rk_df: pd.DataFrame,
+                               late_threshold_days: int = 5) -> pd.DataFrame:
+    """
+    Align payroll and RK contribution rows before timing analysis.
+
+    Matching is deterministic and never performs employee-only many-to-many joins:
+      1. employee_id + RK payroll reference pay_date when both sides have pay_date;
+      2. employee_id + pay_period when both sides expose an explicit period field;
+      3. employee_id + nearest unused deposit_date after pay_date within 45 days.
+
+    Unmatched payroll rows remain visible as missing_deposit. Unmatched RK rows
+    remain visible as unmatched_recordkeeper.
+    """
+    payroll_df = _ensure_timing_columns(payroll_df, "payroll")
+    rk_df = _ensure_timing_columns(rk_df, "rk")
+
+    if "pay_date" in rk_df.columns and payroll_df["pay_date"].notna().any() and rk_df["pay_date"].notna().any():
+        result = _match_on_exact_pay_date(payroll_df, rk_df, late_threshold_days)
+    elif "pay_period" in payroll_df.columns and "pay_period" in rk_df.columns:
+        result = _match_on_pay_period(payroll_df, rk_df, late_threshold_days)
+    else:
+        result = _nearest_deposit_match(payroll_df, rk_df, late_threshold_days)
+
+    return result
 
 
 # ==============================
@@ -943,7 +1189,14 @@ def run_timing_analysis(
         late_threshold_days=late_threshold_days,
     )
 
-    late_rows = result[(result["is_late"]) | (result["missing_deposit"])].copy()
+    unmatched_recordkeeper = (
+        result["unmatched_recordkeeper"]
+        if "unmatched_recordkeeper" in result.columns
+        else pd.Series(False, index=result.index)
+    )
+    late_rows = result[
+        (result["is_late"]) | (result["missing_deposit"]) | unmatched_recordkeeper
+    ].copy()
 
     # Build output paths explicitly
     late_contributions_path = os.path.join(output_dir, "late_contributions.csv")
