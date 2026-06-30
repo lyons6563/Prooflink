@@ -441,17 +441,48 @@ def _add_csv_sheet_to_excel(
         print(f"[WARN] Could not add {sheet_name} sheet to Excel report: {exc}")
 
 
-def _manifest_output_entry(output_path: Union[str, Path]) -> Dict[str, Any]:
+def _portable_manifest_output_path(
+    output_path: Union[str, Path],
+    base_dir: Optional[Union[str, Path]] = None,
+) -> str:
+    """Return a portable manifest path with enough context to identify the run artifact."""
+    resolved = Path(output_path).resolve()
+    repo_root = Path(__file__).resolve().parent
+
+    try:
+        return str(resolved.relative_to(repo_root))
+    except ValueError:
+        pass
+
+    anchor = Path(base_dir).resolve() if base_dir else None
+    if anchor is None:
+        try:
+            anchor = PROOFS_DIR.resolve()
+        except Exception:
+            anchor = None
+
+    if anchor is not None:
+        try:
+            return os.path.relpath(resolved, anchor)
+        except ValueError:
+            pass
+
+    return resolved.name
+
+
+def _manifest_output_entry(
+    output_path: Union[str, Path],
+    base_dir: Optional[Union[str, Path]] = None,
+) -> Dict[str, Any]:
     """Build a manifest output entry using the existing integrity metadata schema."""
     output_path = Path(output_path)
     entry = {
-        "path": output_path.name,
+        "path": _portable_manifest_output_path(output_path, base_dir=base_dir),
         "sha256": sha256_file(output_path),
     }
     if output_path.suffix == ".csv":
         entry.update(hash_csv_rows(output_path))
     return entry
-
 
 def _add_output_to_manifest(
     manifest_path: Optional[Union[str, Path]],
@@ -471,7 +502,7 @@ def _add_output_to_manifest(
         with manifest_path.open("r", encoding="utf-8") as f:
             manifest = json.load(f)
 
-        manifest.setdefault("outputs", {})[logical_name] = _manifest_output_entry(output_path)
+        manifest.setdefault("outputs", {})[logical_name] = _manifest_output_entry(output_path, base_dir=manifest_path.parent)
 
         temp_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
         with temp_path.open("w", encoding="utf-8") as f:
@@ -3128,13 +3159,7 @@ def generate_excel_report():
     def add_output(logical_name: str, filename: str):
         path = DATA_OUT / filename
         if path.exists():
-            entry = {
-                "path": str(path),
-                "sha256": sha256_file(path),
-            }
-            if path.suffix == ".csv":
-                entry.update(hash_csv_rows(path))
-            outputs[logical_name] = entry
+            outputs[logical_name] = _manifest_output_entry(path)
         else:
             outputs[logical_name] = {"missing": True}
 
@@ -3199,4 +3224,3 @@ if __name__ == "__main__":
     else:
         # No CLI args: use config-based wrapper (legacy behavior)
         reconcile_payroll_vs_recordkeeper()
-
