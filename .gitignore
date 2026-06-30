@@ -63,3 +63,9 @@ scripts/test_preflight_gate.py
 
 # Local images
 docs/architecture.png
+# Local synthetic demo data
+data/demo/demo_full_synthetic_mapping.yaml
+data/demo/demo_full_synthetic_payroll.csv
+data/demo/demo_full_synthetic_rk.csv
+demo/synthetic_200_payroll_2025.csv
+demo/synthetic_200_recordkeeper_2025.csv
