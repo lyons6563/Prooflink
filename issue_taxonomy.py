@@ -48,6 +48,24 @@ ISSUE_METADATA_BY_TYPE: Dict[str, IssueMetadata] = {
         ),
     },
     
+    # Population validation issues
+    "EMPLOYMENT_STATUS_CONFLICT": {
+        "issue_category": "Population Validation",
+        "severity": "High",
+        "correction_hint": (
+            "Review payroll and recordkeeper census status values for the participant. "
+            "Confirm current employment status and update source records or operational feeds as needed."
+        ),
+    },
+    "POST_TERMINATION_COMPENSATION": {
+        "issue_category": "Population Validation",
+        "severity": "High",
+        "correction_hint": (
+            "Investigate compensation paid more than 30 days after the recordkeeper termination date. "
+            "Confirm whether the payment, termination date, or census transmission requires operational follow-up."
+        ),
+    },
+    
     # Eligibility issues
     "Late start after eligibility": {
         "issue_category": "Eligibility",

@@ -20,6 +20,58 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _resolve_manifest_output_path(key: str, info: dict, manifest_path: Path) -> Path | None:
+    path_value = info.get("path")
+    if path_value:
+        path = Path(path_value)
+        if path.is_absolute():
+            if path.exists():
+                return path
+            return manifest_path.parent / path.name
+
+        candidates = [
+            manifest_path.parent / path,
+            manifest_path.parent.parent / "output" / path,
+            DATA_OUT / path,
+            PROJECT_ROOT / path,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        if len(path.parts) == 1:
+            try:
+                for candidate in manifest_path.parent.parent.rglob(path.name):
+                    if candidate.is_file():
+                        return candidate
+            except Exception:
+                pass
+
+        return candidates[0]
+
+    known_outputs = {
+        "deferral_mismatches": DATA_OUT / "deferral_mismatches.csv",
+        "loan_mismatches": DATA_OUT / "loan_mismatches.csv",
+        "late_deferrals": DATA_OUT / "late_deferrals_contributions.csv",
+        "late_loans": DATA_OUT / "late_loans_contributions.csv",
+        "excel_report": DATA_OUT / "reconciliation_report.xlsx",
+    }
+    return known_outputs.get(key)
+
+
+def _resolve_input_path(path_value: str, manifest_path: Path) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        if path.exists():
+            return path
+        return manifest_path.parent / path.name
+    candidates = [manifest_path.parent / path, PROJECT_ROOT / path]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def find_latest_manifest() -> Path | None:
     """Return the most recent proof_manifest_*.json file, or None if none exist."""
     if not PROOFS_DIR.exists():
@@ -30,7 +82,7 @@ def find_latest_manifest() -> Path | None:
     return manifests[-1]
 
 
-def verify_manifest(manifest_path: Path) -> None:
+def verify_manifest(manifest_path: Path) -> bool:
     print(f"Verifying manifest: {manifest_path}")
 
     with manifest_path.open("r", encoding="utf-8") as f:
@@ -39,7 +91,7 @@ def verify_manifest(manifest_path: Path) -> None:
     overall_ok = True
 
     # 1) Check payroll file
-    payroll_path = PROJECT_ROOT / manifest["payroll_file"]
+    payroll_path = _resolve_input_path(manifest["payroll_file"], manifest_path)
     if payroll_path.exists():
         expected = sha256_file(payroll_path)
         print(f"\n[PAYROLL] {payroll_path}")
@@ -49,7 +101,7 @@ def verify_manifest(manifest_path: Path) -> None:
         overall_ok = False
 
     # 2) Check recordkeeper file
-    rk_path = PROJECT_ROOT / manifest["recordkeeper_file"]
+    rk_path = _resolve_input_path(manifest["recordkeeper_file"], manifest_path)
     if rk_path.exists():
         expected = sha256_file(rk_path)
         print(f"\n[RECORDKEEPER] {rk_path}")
@@ -63,19 +115,8 @@ def verify_manifest(manifest_path: Path) -> None:
     print("\n[OUTPUT FILES]")
 
     for key, info in outputs.items():
-        # We know what the filenames are from main.py
-        # This must match the mapping used when you built the manifest.
-        if key == "deferral_mismatches":
-            path = DATA_OUT / "deferral_mismatches.csv"
-        elif key == "loan_mismatches":
-            path = DATA_OUT / "loan_mismatches.csv"
-        elif key == "late_deferrals":
-            path = DATA_OUT / "late_deferrals_contributions.csv"
-        elif key == "late_loans":
-            path = DATA_OUT / "late_loans_contributions.csv"
-        elif key == "excel_report":
-            path = DATA_OUT / "reconciliation_report.xlsx"
-        else:
+        path = _resolve_manifest_output_path(key, info, manifest_path)
+        if path is None:
             print(f"  [WARN] Unknown output key in manifest: {key}")
             continue
 
@@ -109,6 +150,7 @@ def verify_manifest(manifest_path: Path) -> None:
     else:
         print("ONE OR MORE CHECKS FAILED – files were changed or are missing.")
     print("============================================")
+    return overall_ok
 
 
 if __name__ == "__main__":
