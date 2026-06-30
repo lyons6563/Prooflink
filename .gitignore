@@ -69,3 +69,11 @@ data/demo/demo_full_synthetic_payroll.csv
 data/demo/demo_full_synthetic_rk.csv
 demo/synthetic_200_payroll_2025.csv
 demo/synthetic_200_recordkeeper_2025.csv
+
+# Generated local demo evidence artifacts
+data/demo/output/
+data/demo/proofs/
+data/demo/population_output/
+data/demo/population_proofs/
+data/demo/population_validation_demo_payroll.csv
+data/demo/population_validation_demo_rk.csv

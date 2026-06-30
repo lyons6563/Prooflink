@@ -234,16 +234,20 @@ def test_population_validation_engine_outputs_corrected_exceptions(tmp_path: Pat
         manifest = json.load(f)
 
     pop_entry = manifest["outputs"]["population_validation_issues"]
-    assert pop_entry["path"] == csv_path.name
+    assert not Path(pop_entry["path"]).is_absolute()
+    assert Path(pop_entry["path"]).name == csv_path.name
     assert pop_entry["sha256"] == verify_proof.sha256_file(csv_path)
     assert pop_entry["row_count"] == 2
     assert pop_entry["merkle_root"]
     assert pop_entry["row_hash_sample"]
 
     excel_entry = manifest["outputs"]["excel_report"]
-    assert excel_entry["path"] == report_path.name
+    assert not Path(excel_entry["path"]).is_absolute()
+    assert Path(excel_entry["path"]).name == report_path.name
     assert excel_entry["sha256"] == verify_proof.sha256_file(report_path)
-    assert verify_proof.verify_manifest(manifest_path) is True
+    manifest_verification = verify_proof.verify_manifest(manifest_path)
+    assert manifest_verification["overall_verification"] == "PASS"
+    assert manifest_verification["output_verification"] == "PASS"
 
     with zipfile.ZipFile(result.evidence_pack_path) as evidence_zip:
         names = set(evidence_zip.namelist())
@@ -251,7 +255,7 @@ def test_population_validation_engine_outputs_corrected_exceptions(tmp_path: Pat
         assert "plan_exception_summary.csv" in names
         assert manifest_path.name in names
         zipped_manifest = json.loads(evidence_zip.read(manifest_path.name).decode("utf-8"))
-        assert zipped_manifest["outputs"]["population_validation_issues"]["path"] == csv_path.name
+        assert zipped_manifest["outputs"]["population_validation_issues"]["path"] == pop_entry["path"]
         assert zipped_manifest["outputs"]["population_validation_issues"]["sha256"] == pop_entry["sha256"]
 
     extracted_dir = tmp_path / "extracted_pack"
@@ -264,7 +268,9 @@ def test_population_validation_engine_outputs_corrected_exceptions(tmp_path: Pat
     rk_csv.unlink()
 
     extracted_manifest = extracted_dir / manifest_path.name
-    assert verify_proof.verify_manifest(extracted_manifest) is True
+    extracted_verification = verify_proof.verify_manifest(extracted_manifest)
+    assert extracted_verification["overall_verification"] == "PASS"
+    assert extracted_verification["output_verification"] == "PASS"
 
 
 def test_no_population_validation_issues_manifest_remains_valid(tmp_path: Path):
@@ -324,7 +330,9 @@ def test_no_population_validation_issues_manifest_remains_valid(tmp_path: Path):
 
     assert "population_validation_issues" not in manifest["outputs"]
     assert Path(result.evidence_pack_path).exists()
-    assert verify_proof.verify_manifest(manifest_path) is True
+    manifest_verification = verify_proof.verify_manifest(manifest_path)
+    assert manifest_verification["overall_verification"] == "PASS"
+    assert manifest_verification["output_verification"] == "PASS"
 
 
 def test_existing_payroll_only_and_rk_only_reconciliation_outputs_remain(tmp_path: Path):
