@@ -735,7 +735,7 @@ def render_run_summary(summary: Dict[str, Any]) -> None:
             else:
                 st.info("Evidence pack not available locally")
         else:
-            st.info("Evidence pack path not available")
+            st.info("Evidence pack not available")
 
 
 def build_anomaly_narrative(summary: Dict[str, Any], results_dict: Dict[str, Any]) -> str:
@@ -922,7 +922,7 @@ def render_batch_reconciliation_tab():
                         "Loan mismatches": summary_dict.get("loan_mismatch_count", 0),
                         "Late deferrals (rows)": summary_dict.get("late_deferral_count", 0),
                         "Risk": risk,
-                        "Evidence pack": summary_dict.get("evidence_pack_path", "N/A"),
+                        "Evidence pack": "Available" if summary_dict.get("evidence_pack_path") else "Not available",
                     }
                 )
             except requests.RequestException as e:
@@ -1601,10 +1601,10 @@ def render_reconciliation_tab():
                     else:
                         st.write("No detailed rows available.")
             
-            # Show CSV path if available
+            # Show CSV availability without exposing filesystem paths.
             secure20_csv_path = secure20.get("csv_path")
             if secure20_csv_path:
-                st.caption(f"Secure 2.0 violations CSV: {secure20_csv_path}")
+                st.caption("Secure 2.0 violations CSV generated.")
         
         # Eligibility Drift Detection
         st.divider()
@@ -1838,6 +1838,119 @@ def render_buyer_demo_tab():
                     mime="application/zip",
                     key=f"download_evidence_{key_suffix}",
                 )
+
+    def artifact_bytes(path_value: Optional[str]) -> Optional[bytes]:
+        if not path_value:
+            return None
+        path = Path(path_value)
+        if not path.exists() or not path.is_file():
+            return None
+        return path.read_bytes()
+
+    def render_executive_summary(summary: Dict[str, Any], run_id: str, manifest: Dict[str, Any]) -> None:
+        executive = summary.get("executive_summary") or {}
+        artifacts = summary.get("executive_summary_artifacts") or {}
+        if not isinstance(executive, dict) or not executive:
+            st.info("Executive summary was not generated for this run.")
+            return
+
+        st.markdown("### Review Summary")
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("Employees Reviewed", f"{executive.get('employees_reviewed', 0):,}")
+        metric_cols[1].metric("Payroll Periods", f"{executive.get('payroll_periods_reviewed', 0):,}")
+        metric_cols[2].metric("Total Exceptions", f"{executive.get('total_exceptions', 0):,}")
+        metric_cols[3].metric("High Priority", f"{executive.get('high_priority_count', 0):,}")
+        verification = executive.get("verification_status") or {}
+        metric_cols[4].metric("Verification", verification.get("overall_verification", "PENDING"))
+
+        category_counts = executive.get("counts_by_issue_category") or {}
+        if category_counts:
+            st.markdown("**Category summary**")
+            category_df = pd.DataFrame(
+                [{"Category": key, "Count": value} for key, value in category_counts.items()]
+            )
+            st.dataframe(category_df, use_container_width=True, hide_index=True)
+
+        top_findings = executive.get("top_priority_exceptions") or []
+        if top_findings:
+            st.markdown("**Top priority findings**")
+            top_df = pd.DataFrame(top_findings)
+            display_cols = [
+                col for col in ["priority", "issue_category", "issue_type", "employee_id", "source", "details"]
+                if col in top_df.columns
+            ]
+            st.dataframe(top_df[display_cols], use_container_width=True, hide_index=True)
+
+        actions = executive.get("recommended_actions") or []
+        if actions:
+            st.markdown("**Recommended actions**")
+            action_df = pd.DataFrame(actions)
+            display_cols = [col for col in ["priority", "issue_type", "action"] if col in action_df.columns]
+            st.dataframe(action_df[display_cols], use_container_width=True, hide_index=True)
+
+        all_exceptions_data = artifact_bytes(artifacts.get("all_exceptions_csv"))
+        if all_exceptions_data:
+            with st.expander("Detailed exception sections", expanded=False):
+                all_df = pd.read_csv(io.BytesIO(all_exceptions_data))
+                if not all_df.empty and "issue_category" in all_df.columns:
+                    for category, group in all_df.groupby("issue_category"):
+                        st.markdown(f"**{category}**")
+                        st.dataframe(group, use_container_width=True, hide_index=True)
+                elif not all_df.empty:
+                    st.dataframe(all_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Downloads")
+        dl_cols = st.columns(4)
+        excel_data = artifact_bytes(artifacts.get("reconciliation_report"))
+        if excel_data:
+            dl_cols[0].download_button(
+                "Excel report",
+                data=excel_data,
+                file_name="reconciliation_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"download_excel_{run_id}",
+            )
+        evidence_data = api_download_evidence_pack(run_id)
+        if evidence_data:
+            dl_cols[1].download_button(
+                "Evidence ZIP",
+                data=evidence_data,
+                file_name=f"prooflink_evidence_{run_id}.zip",
+                mime="application/zip",
+                key=f"download_evidence_zip_{run_id}",
+            )
+        if all_exceptions_data:
+            dl_cols[2].download_button(
+                "All exceptions CSV",
+                data=all_exceptions_data,
+                file_name="all_exceptions.csv",
+                mime="text/csv",
+                key=f"download_all_exceptions_{run_id}",
+            )
+        html_data = artifact_bytes(artifacts.get("executive_summary_html"))
+        if html_data:
+            dl_cols[3].download_button(
+                "Executive summary",
+                data=html_data,
+                file_name="executive_summary.html",
+                mime="text/html",
+                key=f"download_executive_summary_{run_id}",
+            )
+
+        warnings = executive.get("skipped_analyzer_warnings") or []
+        if warnings:
+            with st.expander("Skipped analyzer warnings", expanded=False):
+                for warning in warnings:
+                    st.warning(str(warning))
+
+        with st.expander("Technical Evidence", expanded=False):
+            st.write("Run ID:", run_id)
+            st.write("Status:", st.session_state.get("current_status", "unknown"))
+            st.write("Evidence index:")
+            st.json(summary.get("evidence_index", []))
+            if manifest:
+                st.write("Manifest:")
+                st.json(manifest)
 
     st.title("ProofLink")
     st.caption(
@@ -2139,6 +2252,9 @@ def render_buyer_demo_tab():
         manifest = {}
 
     st.markdown("### Step 5: Key findings")
+    render_executive_summary(summary_dict, run_id, manifest)
+    st.divider()
+
     comp_match = summary_dict.get("compensation_match") or {}
     if not isinstance(comp_match, dict):
         comp_match = {}
@@ -2240,10 +2356,9 @@ def render_buyer_demo_tab():
         st.write("Payroll loans:", summary_dict.get("total_loans_payroll", 0))
         st.write("Recordkeeper loans:", summary_dict.get("total_loans_rk", 0))
 
-    with st.expander("Raw file paths and technical output", expanded=False):
+    with st.expander("Technical Evidence", expanded=False):
         st.write("Run ID:", run_id)
         st.write("Status:", st.session_state.get("current_status", "unknown"))
-        st.write("Evidence pack path:", summary_dict.get("evidence_pack_path"))
         st.write("Evidence index:")
         st.json(summary_dict.get("evidence_index", []))
         if manifest:

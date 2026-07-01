@@ -42,6 +42,13 @@ from population_validation_analyzer import analyze_population_validation
 
 from plan_exception_summary import build_plan_exception_summary
 
+from executive_summary import (
+    add_review_summary_sheet,
+    build_all_exception_rows,
+    build_executive_summary,
+    write_summary_artifacts,
+)
+
 from preflight import run_preflight
 
 
@@ -1329,6 +1336,79 @@ def run_prooflink_engine(
     
     # Add evidence_index to summary
     summary["evidence_index"] = evidence_index
+
+    # Build the client-facing executive summary from actual analyzer outputs.
+    try:
+        recordkeeper_input_df = pd.read_csv(rk_csv)
+    except Exception:
+        recordkeeper_input_df = pd.DataFrame()
+
+    executive_exception_rows = build_all_exception_rows(
+        output_dir=output_dir_path,
+        reconciliation_results=reconciliation_results,
+        secure20_summary=secure20_summary,
+        comp_402g_summary=comp_402g_summary,
+        compensation_match_summary=compensation_match_summary,
+        population_validation_summary=population_validation_summary,
+        timing_result=timing_result if isinstance(timing_result, dict) else {},
+    )
+    executive_summary = build_executive_summary(
+        run_id=str(run_id),
+        plan_name=config.plan_name,
+        plan_year=inferred_plan_year,
+        payroll_df=processed_payroll_df if processed_payroll_df is not None else pd.DataFrame(),
+        recordkeeper_df=recordkeeper_input_df,
+        output_dir=output_dir_path,
+        reconciliation_results=reconciliation_results,
+        secure20_summary=secure20_summary,
+        eligibility_summary=eligibility_summary,
+        comp_402g_summary=comp_402g_summary,
+        match_summary=match_summary,
+        compensation_match_summary=compensation_match_summary,
+        population_validation_summary=population_validation_summary,
+        timing_result=timing_result if isinstance(timing_result, dict) else {},
+        evidence_pack_path=evidence_pack_path,
+    )
+    executive_artifacts = write_summary_artifacts(
+        executive_summary,
+        executive_exception_rows,
+        output_dir_path,
+    )
+    add_review_summary_sheet(output_dir_path / "reconciliation_report.xlsx", executive_summary)
+    executive_artifacts["reconciliation_report"] = str(output_dir_path / "reconciliation_report.xlsx")
+    summary["executive_summary"] = executive_summary
+    summary["executive_summary_artifacts"] = executive_artifacts
+
+    for artifact_key, artifact_path in executive_artifacts.items():
+        if artifact_key == "reconciliation_report":
+            continue
+        artifact_category = "Summary"
+        artifact_name = {
+            "executive_summary_json": "Executive summary data",
+            "executive_summary_html": "Client-facing executive summary",
+            "all_exceptions_csv": "All exceptions CSV",
+        }.get(artifact_key, artifact_key)
+        evidence_index.append({
+            "key": artifact_key,
+            "name": artifact_name,
+            "category": artifact_category,
+            "path": artifact_path,
+        })
+        updated_manifest = _add_output_to_manifest(
+            manifest_path=manifest_path,
+            logical_name=artifact_key,
+            output_path=artifact_path,
+        )
+        if updated_manifest:
+            manifest = updated_manifest
+
+    updated_manifest = _add_output_to_manifest(
+        manifest_path=manifest_path,
+        logical_name="excel_report",
+        output_path=output_dir_path / "reconciliation_report.xlsx",
+    )
+    if updated_manifest:
+        manifest = updated_manifest
     
     _ensure_files_in_evidence_pack(
         evidence_pack_path=evidence_pack_path,
@@ -1338,8 +1418,54 @@ def run_prooflink_engine(
             manifest_path,
             output_dir_path / "reconciliation_report.xlsx",
             plan_ex_summary.get("csv_path"),
+            executive_artifacts.get("executive_summary_json"),
+            executive_artifacts.get("executive_summary_html"),
+            executive_artifacts.get("all_exceptions_csv"),
         ],
     )
+
+    try:
+        import contextlib
+        import io
+        from verify_proof import verify_evidence_pack_zip
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            verification_result = verify_evidence_pack_zip(Path(evidence_pack_path))
+        executive_summary["verification_status"] = {
+            "input_verification": verification_result.get("input_verification"),
+            "output_verification": verification_result.get("output_verification"),
+            "overall_verification": verification_result.get("overall_verification"),
+        }
+        summary["executive_summary"] = executive_summary
+        executive_artifacts = write_summary_artifacts(
+            executive_summary,
+            executive_exception_rows,
+            output_dir_path,
+        )
+        executive_artifacts["reconciliation_report"] = str(output_dir_path / "reconciliation_report.xlsx")
+        summary["executive_summary_artifacts"] = executive_artifacts
+        add_review_summary_sheet(output_dir_path / "reconciliation_report.xlsx", executive_summary)
+        for artifact_key, artifact_path in executive_artifacts.items():
+            logical_name = "excel_report" if artifact_key == "reconciliation_report" else artifact_key
+            updated_manifest = _add_output_to_manifest(
+                manifest_path=manifest_path,
+                logical_name=logical_name,
+                output_path=artifact_path,
+            )
+            if updated_manifest:
+                manifest = updated_manifest
+        _ensure_files_in_evidence_pack(
+            evidence_pack_path=evidence_pack_path,
+            file_paths=[
+                manifest_path,
+                output_dir_path / "reconciliation_report.xlsx",
+                executive_artifacts.get("executive_summary_json"),
+                executive_artifacts.get("executive_summary_html"),
+                executive_artifacts.get("all_exceptions_csv"),
+            ],
+        )
+    except Exception as exc:
+        print(f"[WARN] Executive summary verification update failed: {exc}")
     
     return EngineResult(
         run_id=run_id,
