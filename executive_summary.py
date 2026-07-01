@@ -14,20 +14,59 @@ from openpyxl.utils import get_column_letter
 
 
 SEVERITY_BY_ISSUE_TYPE: Dict[str, str] = {
-    "DEFERRAL_MISMATCH": "High",
-    "LOAN_MISMATCH": "High",
-    "ONLY_IN_PAYROLL": "High",
-    "ONLY_IN_RECORDKEEPER": "High",
-    "LATE_CONTRIBUTION": "High",
+    "DEFERRAL_MISMATCH": "Medium",
+    "LOAN_MISMATCH": "Medium",
+    "ONLY_IN_PAYROLL": "Medium",
+    "ONLY_IN_RECORDKEEPER": "Medium",
+    "LATE_CONTRIBUTION": "Low",
     "EMPLOYMENT_STATUS_CONFLICT": "High",
     "POST_TERMINATION_COMPENSATION": "High",
     "HCE catch-up not coded as Roth": "High",
     "402(g) excess deferrals": "High",
     "Under-match from compensation definition variance": "High",
-    "Over-match from excluded compensation included": "Medium",
+    "Over-match from excluded compensation included": "Low",
     "Match paid to excluded employee class": "High",
     "Under-match": "High",
-    "Over-match": "Medium",
+    "Over-match": "Low",
+}
+
+
+DISPLAY_LABEL_BY_ISSUE_TYPE: Dict[str, str] = {
+    'DEFERRAL_MISMATCH': 'Deferral amount mismatch',
+    'LOAN_MISMATCH': 'Loan payment mismatch',
+    'ONLY_IN_PAYROLL': 'Participant found only in payroll',
+    'ONLY_IN_RECORDKEEPER': 'Participant found only in recordkeeper',
+    'EMPLOYMENT_STATUS_CONFLICT': 'Employment status conflict',
+    'POST_TERMINATION_COMPENSATION': 'Compensation after termination',
+    'LATE_CONTRIBUTION': 'Late contribution deposit',
+    'SECURE20_HCE_PRETAX_CATCHUP': 'HCE catch-up coded incorrectly',
+    'HCE catch-up not coded as Roth': 'HCE catch-up coded incorrectly',
+    'COMP_MATCH_UNDER': 'Employer match underpayment',
+    'Under-match from compensation definition variance': 'Employer match underpayment',
+    'Under-match': 'Employer match underpayment',
+    'COMP_MATCH_OVER': 'Employer match overpayment',
+    'Over-match from excluded compensation included': 'Employer match overpayment',
+    'Over-match': 'Employer match overpayment',
+    '402(g) excess deferrals': '402(g) excess deferral',
+    'Match paid to excluded employee class': 'Employer match paid to excluded class',
+}
+
+WHY_IT_MATTERS: Dict[str, str] = {
+    'DEFERRAL_MISMATCH': 'Payroll and recordkeeper totals do not agree for the participant.',
+    'LOAN_MISMATCH': 'Loan repayments may be missing, duplicated, or posted to the wrong record.',
+    'ONLY_IN_PAYROLL': 'A participant appears in payroll activity but not in the recordkeeper file.',
+    'ONLY_IN_RECORDKEEPER': 'A participant appears in the recordkeeper file but not in payroll activity.',
+    'LATE_CONTRIBUTION': 'Deposits posted later than the expected remittance window.',
+    'EMPLOYMENT_STATUS_CONFLICT': 'Payroll and recordkeeper status values disagree for the same participant.',
+    'POST_TERMINATION_COMPENSATION': 'Compensation appears after the termination date held by the recordkeeper.',
+    'SECURE20_HCE_PRETAX_CATCHUP': 'HCE catch-up contributions may need Roth source coding under Secure 2.0.',
+    'HCE catch-up not coded as Roth': 'HCE catch-up contributions may need Roth source coding under Secure 2.0.',
+    'Under-match from compensation definition variance': 'The participant may have received less employer match than the plan formula indicates.',
+    'Under-match': 'The participant may have received less employer match than the plan formula indicates.',
+    'Over-match from excluded compensation included': 'The participant may have received more employer match than the plan formula indicates.',
+    'Over-match': 'The participant may have received more employer match than the plan formula indicates.',
+    '402(g) excess deferrals': 'Annual elective deferrals may exceed the statutory limit.',
+    'Match paid to excluded employee class': 'Employer match appears for a class that may be excluded under the plan rules.',
 }
 
 
@@ -60,14 +99,16 @@ ISSUE_CATEGORIES: Dict[str, str] = {
 
 ALL_EXCEPTION_COLUMNS = [
     "priority",
+    "finding_name",
+    "participant",
+    "why_it_matters",
+    "recommended_action",
     "issue_category",
     "issue_type",
     "employee_id",
     "source",
     "details",
-    "recommended_action",
 ]
-
 
 def _safe_read_csv(path: Optional[str | Path]) -> pd.DataFrame:
     if not path:
@@ -91,11 +132,26 @@ def _as_int(value: Any) -> int:
 
 
 def _severity(issue_type: str, fallback: Any = None) -> str:
+    issue_key = str(issue_type)
+    if issue_key in SEVERITY_BY_ISSUE_TYPE:
+        return SEVERITY_BY_ISSUE_TYPE[issue_key]
     if fallback is not None and not pd.isna(fallback):
         value = str(fallback).strip().title()
-        if value in {"High", "Medium", "Low"}:
+        if value in {'High', 'Medium', 'Low', 'Informational'}:
             return value
-    return SEVERITY_BY_ISSUE_TYPE.get(str(issue_type), "Medium")
+    return 'Medium'
+
+def _display_label(issue_type: str) -> str:
+    return DISPLAY_LABEL_BY_ISSUE_TYPE.get(str(issue_type), str(issue_type).replace('_', ' ').title())
+
+
+def _why_it_matters(issue_type: str, details: Any = None) -> str:
+    issue_key = str(issue_type)
+    if issue_key in WHY_IT_MATTERS:
+        return WHY_IT_MATTERS[issue_key]
+    if details is not None and not pd.isna(details) and str(details).strip():
+        return str(details).strip()
+    return 'This finding needs operational review before relying on the file for plan administration.'
 
 
 def _action(issue_type: str, fallback: Any = None) -> str:
@@ -134,15 +190,20 @@ def _append_rows_from_csv(
         for field in detail_fields:
             if field in row.index and not pd.isna(row.get(field)):
                 details.append(f"{field}={row.get(field)}")
+        detail_text = ", ".join(details)
+        participant = _employee_id(row)
         rows.append(
             {
                 "priority": _severity(issue_type),
+                "finding_name": _display_label(issue_type),
+                "participant": participant,
+                "why_it_matters": _why_it_matters(issue_type, detail_text),
+                "recommended_action": _action(issue_type),
                 "issue_category": category,
                 "issue_type": issue_type,
-                "employee_id": _employee_id(row),
+                "employee_id": participant,
                 "source": source,
-                "details": ", ".join(details),
-                "recommended_action": _action(issue_type),
+                "details": detail_text,
             }
         )
 
@@ -222,15 +283,19 @@ def build_all_exception_rows(
             details = row.get("details")
             if details is None or pd.isna(details):
                 details = ""
+            participant = _employee_id(row)
             rows.append(
                 {
                     "priority": _severity(issue_type, row.get("severity")),
+                    "finding_name": _display_label(issue_type),
+                    "participant": participant,
+                    "why_it_matters": _why_it_matters(issue_type, details),
+                    "recommended_action": _action(issue_type, row.get("correction_hint")),
                     "issue_category": category,
                     "issue_type": issue_type,
-                    "employee_id": _employee_id(row),
+                    "employee_id": participant,
                     "source": source_name,
                     "details": str(details),
-                    "recommended_action": _action(issue_type, row.get("correction_hint")),
                 }
             )
 
@@ -299,13 +364,13 @@ def build_executive_summary(
 
     priority_counts = exceptions_df["priority"].value_counts().to_dict() if not exceptions_df.empty else {}
     category_counts = exceptions_df["issue_category"].value_counts().to_dict() if not exceptions_df.empty else {}
-    type_counts = exceptions_df["issue_type"].value_counts().to_dict() if not exceptions_df.empty else {}
+    type_counts = exceptions_df["finding_name"].value_counts().to_dict() if not exceptions_df.empty else {}
 
-    priority_rank = {"High": 0, "Medium": 1, "Low": 2}
+    priority_rank = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3}
     top_df = exceptions_df.copy()
     if not top_df.empty:
         top_df["_rank"] = top_df["priority"].map(priority_rank).fillna(3)
-        top_df = top_df.sort_values(["_rank", "issue_category", "issue_type"]).drop(columns=["_rank"])
+        top_df = top_df.sort_values(["_rank", "issue_category", "finding_name"]).drop(columns=["_rank"])
 
     recommended_actions = []
     seen_actions = set()
@@ -314,6 +379,7 @@ def build_executive_summary(
         if action and action not in seen_actions:
             recommended_actions.append(
                 {
+                    "finding_name": row.get("finding_name"),
                     "issue_type": row.get("issue_type"),
                     "priority": row.get("priority"),
                     "action": action,
@@ -400,14 +466,15 @@ def render_summary_html(summary: Dict[str, Any]) -> str:
         "<tr>"
         f"<td>{esc(item.get('priority'))}</td>"
         f"<td>{esc(item.get('issue_category'))}</td>"
-        f"<td>{esc(item.get('issue_type'))}</td>"
-        f"<td>{esc(item.get('employee_id'))}</td>"
-        f"<td>{esc(item.get('details'))}</td>"
+        f"<td>{esc(item.get('finding_name'))}</td>"
+        f"<td>{esc(item.get('participant'))}</td>"
+        f"<td>{esc(item.get('why_it_matters'))}</td>"
+        f"<td>{esc(item.get('recommended_action'))}</td>"
         "</tr>"
         for item in summary.get("top_priority_exceptions", [])
     )
     actions = "".join(
-        f"<li><strong>{esc(item.get('issue_type'))}:</strong> {esc(item.get('action'))}</li>"
+        f"<li><strong>{esc(item.get('finding_name'))}:</strong> {esc(item.get('action'))}</li>"
         for item in summary.get("recommended_actions", [])
     )
     verification = summary.get("verification_status") or {}
@@ -428,7 +495,7 @@ def render_summary_html(summary: Dict[str, Any]) -> str:
     .label {{ color: #52616b; font-size: 12px; text-transform: uppercase; }}
     .value {{ font-size: 24px; font-weight: 700; }}
     table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
-    th, td {{ border: 1px solid #d8dee9; padding: 7px; text-align: left; vertical-align: top; }}
+    th, td {{ border: 1px solid #d8dee9; padding: 7px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }}
     th {{ background: #f3f6f8; }}
     .note {{ color: #52616b; }}
   </style>
@@ -446,7 +513,7 @@ def render_summary_html(summary: Dict[str, Any]) -> str:
   <h2>Issue Categories</h2>
   <table><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>{categories}</tbody></table>
   <h2>Top Priority Findings</h2>
-  <table><thead><tr><th>Priority</th><th>Category</th><th>Type</th><th>Employee</th><th>Details</th></tr></thead><tbody>{findings}</tbody></table>
+  <table><thead><tr><th>Priority</th><th>Category</th><th>Finding</th><th>Participant</th><th>Why it matters</th><th>Recommended action</th></tr></thead><tbody>{findings}</tbody></table>
   <h2>Recommended Actions</h2>
   <ul>{actions}</ul>
   <h2>Evidence Verification</h2>
@@ -508,40 +575,39 @@ def add_review_summary_sheet(excel_path: Path, summary: Dict[str, Any]) -> None:
     row_num += 2
     ws.cell(row_num, 1, "Top Priority Exceptions").font = bold
     ws.cell(row_num, 1).fill = section_fill
-    ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=6)
+    ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=5)
     row_num += 1
-    headers = ["Priority", "Category", "Issue Type", "Employee", "Source", "Details"]
+    headers = ["Priority", "Finding", "Participant", "Why it matters", "Recommended action"]
     for col, header in enumerate(headers, start=1):
         ws.cell(row_num, col, header).font = bold
     table_start = row_num
     for item in summary.get("top_priority_exceptions", [])[:10]:
         row_num += 1
         ws.cell(row_num, 1, item.get("priority"))
-        ws.cell(row_num, 2, item.get("issue_category"))
-        ws.cell(row_num, 3, item.get("issue_type"))
-        ws.cell(row_num, 4, item.get("employee_id"))
-        ws.cell(row_num, 5, item.get("source"))
-        ws.cell(row_num, 6, item.get("details"))
+        ws.cell(row_num, 2, item.get("finding_name"))
+        ws.cell(row_num, 3, item.get("participant"))
+        ws.cell(row_num, 4, item.get("why_it_matters"))
+        ws.cell(row_num, 5, item.get("recommended_action"))
     if row_num > table_start:
-        ws.auto_filter.ref = f"A{table_start}:F{row_num}"
+        ws.auto_filter.ref = f"A{table_start}:E{row_num}"
 
     row_num += 2
     ws.cell(row_num, 1, "Recommended Next Actions").font = bold
     ws.cell(row_num, 1).fill = section_fill
-    ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=6)
+    ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=5)
     for action in summary.get("recommended_actions", [])[:8]:
         row_num += 1
-        ws.cell(row_num, 1, action.get("issue_type"))
+        ws.cell(row_num, 1, action.get("finding_name"))
         ws.cell(row_num, 2, action.get("action"))
-        ws.merge_cells(start_row=row_num, start_column=2, end_row=row_num, end_column=6)
+        ws.merge_cells(start_row=row_num, start_column=2, end_row=row_num, end_column=5)
 
     row_num += 2
     ws.cell(row_num, 1, "Note").font = bold
     ws.cell(row_num, 2, "Detailed tabs contain supporting records for each output.")
-    ws.merge_cells(start_row=row_num, start_column=2, end_row=row_num, end_column=6)
+    ws.merge_cells(start_row=row_num, start_column=2, end_row=row_num, end_column=5)
 
     ws.freeze_panes = "A3"
-    widths = {1: 24, 2: 24, 3: 22, 4: 18, 5: 22, 6: 60}
+    widths = {1: 18, 2: 28, 3: 18, 4: 46, 5: 64}
     for col, width in widths.items():
         ws.column_dimensions[get_column_letter(col)].width = width
     for row in ws.iter_rows():
