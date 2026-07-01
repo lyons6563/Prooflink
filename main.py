@@ -509,7 +509,7 @@ def _add_output_to_manifest(
         with manifest_path.open("r", encoding="utf-8") as f:
             manifest = json.load(f)
 
-        manifest.setdefault("outputs", {})[logical_name] = _manifest_output_entry(output_path, base_dir=manifest_path.parent)
+        manifest.setdefault("outputs", {})[logical_name] = _manifest_output_entry(output_path)
 
         temp_path = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
         with temp_path.open("w", encoding="utf-8") as f:
@@ -1464,6 +1464,16 @@ def run_prooflink_engine(
                 executive_artifacts.get("all_exceptions_csv"),
             ],
         )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            final_verification_result = verify_evidence_pack_zip(Path(evidence_pack_path))
+        executive_summary["verification_status"] = {
+            "input_verification": final_verification_result.get("input_verification"),
+            "output_verification": final_verification_result.get("output_verification"),
+            "overall_verification": final_verification_result.get("overall_verification"),
+        }
+        summary["executive_summary"] = executive_summary
+
     except Exception as exc:
         print(f"[WARN] Executive summary verification update failed: {exc}")
     
