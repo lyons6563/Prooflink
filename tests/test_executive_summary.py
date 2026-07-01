@@ -10,7 +10,12 @@ from openpyxl import load_workbook
 from executive_summary import RECOMMENDED_ACTIONS, SEVERITY_BY_ISSUE_TYPE
 from main import EngineConfig, run_prooflink_engine
 from scripts.generate_realistic_demo import generate_dataset
-from verify_proof import verify_evidence_pack_zip
+from verify_proof import sha256_file, verify_evidence_pack_zip
+from streamlit_app import (
+    build_category_summary_rows,
+    build_technical_evidence_summary,
+    resolve_review_verification,
+)
 
 
 def _polished_plan_rules() -> dict:
@@ -132,3 +137,41 @@ def test_polished_fixture_executive_summary_integration_without_ground_truth(tmp
     assert "all_exceptions_csv" in manifest_outputs
     assert "excel_report" in manifest_outputs
 
+    for key in ["executive_summary_json", "executive_summary_html", "all_exceptions_csv"]:
+        artifact_path = Path(artifacts[key])
+        assert manifest_outputs[key]["sha256"] == sha256_file(artifact_path)
+        assert Path(manifest_outputs[key]["path"]).name == artifact_path.name
+
+    assert summary["verification_status"]["input_verification"] == "PASS"
+    assert summary["verification_status"]["output_verification"] == "PASS"
+    assert summary["verification_status"]["overall_verification"] == "PASS"
+
+    display_verification = resolve_review_verification(result.summary, summary)
+    assert display_verification["overall_verification"] == "PASS"
+
+    category_rows = build_category_summary_rows(summary)
+    assert category_rows == [
+        {"Category": "Core Reconciliation", "Count": 5},
+        {"Category": "Contribution Timing", "Count": 2},
+        {"Category": "Compensation/Match", "Count": 2},
+        {"Category": "Population Validation", "Count": 2},
+        {"Category": "Secure 2.0", "Count": 1},
+    ]
+    assert all(isinstance(row["Count"], int) for row in category_rows)
+
+    tech_summary = build_technical_evidence_summary(result.summary, summary, result.manifest, result.run_id, display_verification, evidence_zip_available=True)
+    assert tech_summary["Verification status"] == "PASS"
+    assert tech_summary["Output files verified"] >= 7
+    assert tech_summary["Evidence ZIP available"] == "Yes"
+    assert tech_summary["Manifest available"] == "Yes"
+    assert not any(str(tmp_path) in str(value) for value in tech_summary.values())
+
+
+def test_streamlit_review_summary_layout_uses_compact_status_and_technical_evidence():
+    source = Path("streamlit_app.py").read_text(encoding="utf-8")
+    assert "metric(\"Review status\"" not in source
+    assert "**Review status:** Needs review" in source
+    assert "build_category_summary_rows" in source
+    assert "build_technical_evidence_summary" in source
+    assert "Raw manifest and hashes" in source
+    assert "st.json(summary.get(\"evidence_index\"" not in source

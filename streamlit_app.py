@@ -175,6 +175,47 @@ def api_download_evidence_pack(run_id: str) -> Optional[bytes]:
     return resp.content
 
 
+def build_technical_evidence_summary(summary: Dict[str, Any], executive: Dict[str, Any], manifest: Dict[str, Any], run_id: str, verification: Dict[str, Any], evidence_zip_available: bool) -> Dict[str, Any]:
+    outputs = manifest.get('outputs', {}) if isinstance(manifest, dict) else {}
+    verified_outputs = sum(1 for info in outputs.values() if isinstance(info, dict) and info.get('sha256') and not info.get('missing'))
+    return {'Run ID': run_id, 'Verification status': verification.get('overall_verification', 'PENDING'), 'Output files verified': verified_outputs, 'Evidence ZIP available': 'Yes' if evidence_zip_available or bool(summary.get('evidence_pack_path') or executive.get('evidence_pack_path')) else 'No', 'Manifest available': 'Yes' if bool(outputs) else 'No'}
+
+def resolve_review_verification(summary: Dict[str, Any], executive: Dict[str, Any]) -> Dict[str, Any]:
+    stored = dict(executive.get('verification_status') or {})
+    pack_path = summary.get('evidence_pack_path') or executive.get('evidence_pack_path')
+    if pack_path:
+        path = Path(pack_path)
+        if path.exists() and path.is_file():
+            try:
+                import contextlib
+                from verify_proof import verify_evidence_pack_zip
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = verify_evidence_pack_zip(path)
+                return {'input_verification': result.get('input_verification'), 'output_verification': result.get('output_verification'), 'overall_verification': result.get('overall_verification'), 'overall_ok': result.get('overall_ok')}
+            except Exception as exc:
+                stored['message'] = f'Local verification could not run: {exc}'
+    return stored or {'overall_verification': 'PENDING'}
+
+def build_category_summary_rows(executive: Dict[str, Any]) -> List[Dict[str, Any]]:
+    counts = executive.get('counts_by_issue_category') or {}
+    preferred_order = [
+        'Core Reconciliation',
+        'Contribution Timing',
+        'Compensation/Match',
+        'Population Validation',
+        'Secure 2.0',
+    ]
+    ordered_categories = [category for category in preferred_order if category in counts]
+    ordered_categories.extend(category for category in counts if category not in ordered_categories)
+    rows = []
+    for category in ordered_categories:
+        try:
+            numeric_count = int(counts.get(category, 0))
+        except Exception:
+            numeric_count = 0
+        rows.append({'Category': str(category), 'Count': numeric_count})
+    return rows
+
 def api_list_runs(limit: int = 50) -> Dict[str, Any]:
     """
     Call the ProofLink backend API to list recent runs, or return current run in direct mode.
@@ -1861,22 +1902,20 @@ def render_buyer_demo_tab():
             return
 
         st.markdown("### Review Summary")
-        verification = executive.get("verification_status") or {}
-        metric_cols = st.columns(6)
-        metric_cols[0].metric("Review status", "Needs review")
-        metric_cols[1].metric("Employees reviewed", f"{executive.get('employees_reviewed', 0):,}")
-        metric_cols[2].metric("Total findings", f"{executive.get('total_exceptions', 0):,}")
-        metric_cols[3].metric("High", f"{executive.get('high_priority_count', 0):,}")
-        metric_cols[4].metric("Medium", f"{executive.get('medium_priority_count', 0):,}")
-        metric_cols[5].metric("Low", f"{executive.get('low_priority_count', 0):,}")
-        st.caption(f"Evidence verification: {verification.get('overall_verification', 'PENDING')}")
-        category_counts = executive.get("counts_by_issue_category") or {}
-        if category_counts:
+        verification = resolve_review_verification(summary, executive)
+        status_text = verification.get("overall_verification", "PENDING")
+        st.markdown(f"**Review status:** Needs review  |  **Evidence verification:** {status_text}")
+        metric_cols = st.columns(5)
+        metric_cols[0].metric("Employees reviewed", f"{executive.get('employees_reviewed', 0):,}")
+        metric_cols[1].metric("Total findings", f"{executive.get('total_exceptions', 0):,}")
+        metric_cols[2].metric("High", f"{executive.get('high_priority_count', 0):,}")
+        metric_cols[3].metric("Medium", f"{executive.get('medium_priority_count', 0):,}")
+        metric_cols[4].metric("Low", f"{executive.get('low_priority_count', 0):,}")
+        category_rows = build_category_summary_rows(executive)
+        if category_rows:
             st.markdown("**Category summary**")
-            category_df = pd.DataFrame(
-                [{"Category": key, "Count": value} for key, value in category_counts.items()]
-            )
-            st.dataframe(category_df, use_container_width=True, hide_index=True)
+            category_df = pd.DataFrame(category_rows)
+            st.table(category_df)
 
         top_findings = executive.get("top_priority_exceptions") or []
         if top_findings:
@@ -1891,28 +1930,7 @@ def render_buyer_demo_tab():
                 "recommended_action": "Recommended action",
             })
             st.table(display_df)
-        actions = executive.get("recommended_actions") or []
-        if actions:
-            st.markdown("**Recommended actions**")
-            action_df = pd.DataFrame(actions)
-            display_cols = [col for col in ["priority", "finding_name", "action"] if col in action_df.columns]
-            action_df = action_df[display_cols].rename(columns={
-                "priority": "Priority",
-                "finding_name": "Finding",
-                "action": "Recommended action",
-            })
-            st.table(action_df)
         all_exceptions_data = artifact_bytes(artifacts.get("all_exceptions_csv"))
-        if all_exceptions_data:
-            with st.expander("Technical Evidence - detailed exception records", expanded=False):
-                all_df = pd.read_csv(io.BytesIO(all_exceptions_data))
-                if not all_df.empty and "issue_category" in all_df.columns:
-                    for category, group in all_df.groupby("issue_category"):
-                        st.markdown(f"**{category}**")
-                        st.dataframe(group, use_container_width=True, hide_index=True)
-                elif not all_df.empty:
-                    st.dataframe(all_df, use_container_width=True, hide_index=True)
-
         st.markdown("### Downloads")
         dl_cols = st.columns(4)
         excel_data = artifact_bytes(artifacts.get("reconciliation_report"))
@@ -1958,13 +1976,13 @@ def render_buyer_demo_tab():
                     st.warning(str(warning))
 
         with st.expander("Technical Evidence", expanded=False):
-            st.write("Run ID:", run_id)
-            st.write("Status:", st.session_state.get("current_status", "unknown"))
-            st.write("Evidence index:")
-            st.json(summary.get("evidence_index", []))
-            if manifest:
-                st.write("Manifest:")
-                st.json(manifest)
+            tech_summary = build_technical_evidence_summary(summary, executive, manifest, run_id, verification, evidence_data is not None)
+            st.table(pd.DataFrame([tech_summary]))
+            with st.expander("Raw manifest and hashes", expanded=False):
+                if manifest:
+                    st.json(manifest)
+                else:
+                    st.info("Manifest details are not available for this run.")
 
     st.title("ProofLink")
     st.caption(
