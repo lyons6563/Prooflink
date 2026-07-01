@@ -1,0 +1,59 @@
+{
+  "dataset_name": "ProofLink polished 100-employee client demo",
+  "employee_count": 100,
+  "files": {
+    "ground_truth": {
+      "path": "prooflink_polished_100_ground_truth.csv",
+      "sha256": "3d78e00ac359e676a7069a8642a49adf7f4de3d65bfbc5205cc3a0862232439f"
+    },
+    "mapping": {
+      "path": "prooflink_polished_100_mapping.yaml",
+      "sha256": "5636c5ee5194dbbe2b163db531b9b5674840b4001d5944b087d4966816f10592"
+    },
+    "payroll": {
+      "path": "prooflink_polished_100_payroll.csv",
+      "sha256": "a193b723e4b5a2ab5df1d1824ac9fb9431cf693725ab8d12d10aaa7eea5ad13f"
+    },
+    "recordkeeper": {
+      "path": "prooflink_polished_100_recordkeeper.csv",
+      "sha256": "c7ec0e56300b7b2ed1f859c1620706297648018dea0c221b57e1a0c9521e8ab6"
+    }
+  },
+  "generated_at_utc": "2025-06-30T00:00:00Z",
+  "ground_truth_row_count": 12,
+  "pay_period_end": "2025-04-11",
+  "pay_period_start": "2025-01-03",
+  "payroll_period_count": 8,
+  "payroll_row_count": 800,
+  "plan_assumptions": {
+    "default_deposit_lag_business_days": "1-3",
+    "late_threshold_business_days": 5,
+    "loans": "Small subset only",
+    "match_formula_for_current_engine_demo": "50% of deferrals up to 6% of eligible compensation",
+    "payroll_frequency": "biweekly",
+    "plan_year": 2025,
+    "reimbursements": "Excluded from plan compensation",
+    "target_plan_formula_note": "The client-facing guide describes the common 100% of first 3% plus 50% of next 2% formula; current branch analyzers model a single-rate equivalent, so this generated dataset is calibrated to the branch's active analyzer."
+  },
+  "profile": "polished",
+  "recordkeeper_row_count": 793,
+  "scenario_counts": {
+    "COMP_MATCH_OVER": 1,
+    "COMP_MATCH_UNDER": 1,
+    "DEFERRAL_MISMATCH": 2,
+    "EMPLOYMENT_STATUS_CONFLICT": 1,
+    "LATE_CONTRIBUTION": 2,
+    "LOAN_MISMATCH": 1,
+    "ONLY_IN_PAYROLL": 1,
+    "ONLY_IN_RECORDKEEPER": 1,
+    "POST_TERMINATION_COMPENSATION": 1,
+    "SECURE20_HCE_PRETAX_CATCHUP": 1
+  },
+  "schema_notes": {
+    "ground_truth": "Client-facing explanation of each deliberately planted issue.",
+    "payroll": "Synthetic labels only; no names, SSNs, addresses, emails, or real employer data.",
+    "recordkeeper": "Canonical contribution rows with payroll reference dates for period-level timing alignment."
+  },
+  "seed": 20250630,
+  "year": 2025
+}
