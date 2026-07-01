@@ -1174,18 +1174,20 @@ def render_reconciliation_tab():
     
     with st.expander("Compensation / Match Rules"):
         match_rate_pct = st.number_input(
-            "Match rate (%)",
+            "Match rate (% of eligible deferrals)",
             min_value=0.0,
             max_value=100.0,
             value=50.0,
             step=1.0,
+            help="Enter a whole percent: 50 means 50%. Entering 0.50 means one-half percent.",
         )
         match_cap_pct = st.number_input(
-            "Match cap (%)",
+            "Match cap (% of compensation)",
             min_value=0.0,
             max_value=100.0,
             value=6.0,
             step=0.5,
+            help="Enter a whole percent: 6 means 6% of compensation.",
         )
         match_frequency = st.selectbox(
             "Match frequency",
@@ -1193,6 +1195,10 @@ def render_reconciliation_tab():
             index=0,
         )
         true_up_enabled = st.checkbox("True-up enabled", value=False)
+        if 0 < match_rate_pct < 1:
+            st.warning("Match rate is below 1%. Enter 50 for a 50% match rate, not 0.50.")
+        if match_cap_pct > 25:
+            st.warning("Match cap is unusually high. Confirm this is a percent of compensation.")
         eligible_comp_columns_text = st.text_input(
             "Eligible compensation columns",
             value="Eligibility Compensation, Plan Compensation, Compensation",
@@ -1855,14 +1861,15 @@ def render_buyer_demo_tab():
             return
 
         st.markdown("### Review Summary")
-        metric_cols = st.columns(5)
-        metric_cols[0].metric("Employees Reviewed", f"{executive.get('employees_reviewed', 0):,}")
-        metric_cols[1].metric("Payroll Periods", f"{executive.get('payroll_periods_reviewed', 0):,}")
-        metric_cols[2].metric("Total Exceptions", f"{executive.get('total_exceptions', 0):,}")
-        metric_cols[3].metric("High Priority", f"{executive.get('high_priority_count', 0):,}")
         verification = executive.get("verification_status") or {}
-        metric_cols[4].metric("Verification", verification.get("overall_verification", "PENDING"))
-
+        metric_cols = st.columns(6)
+        metric_cols[0].metric("Review status", "Needs review")
+        metric_cols[1].metric("Employees reviewed", f"{executive.get('employees_reviewed', 0):,}")
+        metric_cols[2].metric("Total findings", f"{executive.get('total_exceptions', 0):,}")
+        metric_cols[3].metric("High", f"{executive.get('high_priority_count', 0):,}")
+        metric_cols[4].metric("Medium", f"{executive.get('medium_priority_count', 0):,}")
+        metric_cols[5].metric("Low", f"{executive.get('low_priority_count', 0):,}")
+        st.caption(f"Evidence verification: {verification.get('overall_verification', 'PENDING')}")
         category_counts = executive.get("counts_by_issue_category") or {}
         if category_counts:
             st.markdown("**Category summary**")
@@ -1873,24 +1880,31 @@ def render_buyer_demo_tab():
 
         top_findings = executive.get("top_priority_exceptions") or []
         if top_findings:
-            st.markdown("**Top priority findings**")
+            st.markdown("**Findings to review**")
             top_df = pd.DataFrame(top_findings)
-            display_cols = [
-                col for col in ["priority", "issue_category", "issue_type", "employee_id", "source", "details"]
-                if col in top_df.columns
-            ]
-            st.dataframe(top_df[display_cols], use_container_width=True, hide_index=True)
-
+            display_cols = [col for col in ["finding_name", "participant", "priority", "why_it_matters", "recommended_action"] if col in top_df.columns]
+            display_df = top_df[display_cols].rename(columns={
+                "finding_name": "Finding",
+                "participant": "Participant",
+                "priority": "Priority",
+                "why_it_matters": "Why it matters",
+                "recommended_action": "Recommended action",
+            })
+            st.table(display_df)
         actions = executive.get("recommended_actions") or []
         if actions:
             st.markdown("**Recommended actions**")
             action_df = pd.DataFrame(actions)
-            display_cols = [col for col in ["priority", "issue_type", "action"] if col in action_df.columns]
-            st.dataframe(action_df[display_cols], use_container_width=True, hide_index=True)
-
+            display_cols = [col for col in ["priority", "finding_name", "action"] if col in action_df.columns]
+            action_df = action_df[display_cols].rename(columns={
+                "priority": "Priority",
+                "finding_name": "Finding",
+                "action": "Recommended action",
+            })
+            st.table(action_df)
         all_exceptions_data = artifact_bytes(artifacts.get("all_exceptions_csv"))
         if all_exceptions_data:
-            with st.expander("Detailed exception sections", expanded=False):
+            with st.expander("Technical Evidence - detailed exception records", expanded=False):
                 all_df = pd.read_csv(io.BytesIO(all_exceptions_data))
                 if not all_df.empty and "issue_category" in all_df.columns:
                     for category, group in all_df.groupby("issue_category"):
@@ -2056,21 +2070,27 @@ def render_buyer_demo_tab():
     )
     rule_cols = st.columns(4)
     match_rate_pct = rule_cols[0].number_input(
-        "Match rate (%)",
+        "Match rate (% of eligible deferrals)",
         min_value=0.0,
         max_value=100.0,
         value=50.0,
         step=1.0,
+        help="Enter a whole percent: 50 means 50%. Entering 0.50 means one-half percent.",
     )
     match_cap_pct = rule_cols[1].number_input(
-        "Match cap (%)",
+        "Match cap (% of compensation)",
         min_value=0.0,
         max_value=100.0,
         value=6.0,
         step=0.5,
+        help="Enter a whole percent: 6 means 6% of compensation.",
     )
     match_frequency = rule_cols[2].selectbox("Match frequency", ["per_payroll", "annual"], index=0)
     true_up_enabled = rule_cols[3].checkbox("True-up enabled", value=False)
+    if 0 < match_rate_pct < 1:
+        st.warning("Match rate is below 1%. Enter 50 for a 50% match rate, not 0.50.")
+    if match_cap_pct > 25:
+        st.warning("Match cap is unusually high. Confirm this is a percent of compensation.")
 
     with st.expander("Compensation and employee class rule details", expanded=demo_defaults):
         if payroll_columns:
@@ -2253,130 +2273,7 @@ def render_buyer_demo_tab():
 
     st.markdown("### Step 5: Key findings")
     render_executive_summary(summary_dict, run_id, manifest)
-    st.divider()
-
-    comp_match = summary_dict.get("compensation_match") or {}
-    if not isinstance(comp_match, dict):
-        comp_match = {}
-    comp_csv_path = comp_match.get("csv_path")
-    comp_df = pd.DataFrame()
-    if comp_csv_path and os.path.exists(comp_csv_path):
-        comp_df = pd.read_csv(comp_csv_path)
-
-    affected_participants = 0
-    if not comp_df.empty and "employee_id" in comp_df.columns:
-        affected_participants = int(comp_df["employee_id"].nunique())
-    elif comp_match.get("issue_count", 0):
-        affected_participants = comp_match.get("participants_evaluated", 0)
-
-    top_cols = st.columns(4)
-    top_cols[0].metric("Compensation / Match Issues", f"{comp_match.get('issue_count', 0):,}")
-    top_cols[1].metric("Estimated Under-match $", f"${float(comp_match.get('estimated_under_match_dollars', 0.0)):,.2f}")
-    top_cols[2].metric("Estimated Over-match $", f"${float(comp_match.get('estimated_over_match_dollars', 0.0)):,.2f}")
-    top_cols[3].metric("Affected Participants", f"{affected_participants:,}")
-
-    if not comp_df.empty and "likely_root_cause" in comp_df.columns:
-        st.markdown("**Top root causes**")
-        root_causes = comp_df["likely_root_cause"].value_counts().head(5).reset_index()
-        root_causes.columns = ["Root cause", "Rows"]
-        st.dataframe(root_causes, use_container_width=True)
-
-    plan_health = summary_dict.get("plan_health") if isinstance(summary_dict, dict) else None
-    if plan_health:
-        st.markdown("**Plan Health**")
-        health_cols = st.columns(3)
-        health_cols[0].metric("Score", f"{plan_health.get('score', 0)}")
-        health_cols[1].metric("Grade", plan_health.get("grade", "N/A"))
-        health_cols[2].metric("Risk", plan_health.get("risk_level", "N/A"))
-
-    st.markdown("**Reconciliation summary**")
-    recon_cols = st.columns(3)
-    recon_cols[0].metric("Deferral Mismatches", f"{summary_dict.get('deferral_mismatch_count', 0):,}")
-    recon_cols[1].metric("Loan Mismatches", f"{summary_dict.get('loan_mismatch_count', 0):,}")
-    recon_cols[2].metric("Late Deferral Rows", f"{summary_dict.get('late_deferral_count', 0):,}")
-
-    st.markdown("### Step 6: Download evidence pack")
-    render_evidence_download(run_id, "key_findings")
-
-    with st.expander("Compensation / match issue detail", expanded=False):
-        if not comp_df.empty:
-            st.dataframe(comp_df, use_container_width=True)
-            with open(comp_csv_path, "rb") as f:
-                st.download_button(
-                    label="Download compensation/match issues CSV",
-                    data=f.read(),
-                    file_name="compensation_match_issues.csv",
-                    mime="text/csv",
-                    key="download_compensation_match_issues",
-                )
-        else:
-            st.write("No compensation/match issue CSV was generated for this run.")
-
-    with st.expander("Contribution timing detail", expanded=False):
-        timing_metrics = summary_dict.get("timing_metrics", {}) or {}
-        if timing_metrics:
-            timing_cols = st.columns(4)
-            timing_cols[0].metric("Timing Risk", timing_metrics.get("timing_risk", "N/A"))
-            timing_cols[1].metric("Rows Analyzed", timing_metrics.get("total_rows", 0))
-            timing_cols[2].metric("Late Rows", timing_metrics.get("late_rows", 0))
-            timing_cols[3].metric("Missing Deposits", timing_metrics.get("missing_deposits", 0))
-        else:
-            st.write("No timing metrics available for this run.")
-
-    with st.expander("Secure 2.0 detail", expanded=False):
-        secure20 = summary_dict.get("secure20") or {}
-        if not isinstance(secure20, dict):
-            secure20 = {}
-        st.metric("Total Secure 2.0 exceptions", secure20.get("total_violations", 0))
-        if secure20.get("by_type"):
-            st.json(secure20.get("by_type"))
-        violations = secure20.get("violations", [])
-        if violations:
-            st.dataframe(pd.DataFrame(violations), use_container_width=True)
-
-    with st.expander("Eligibility drift detail", expanded=False):
-        drift_summary = summary_dict.get("eligibility_drift") or {}
-        if not isinstance(drift_summary, dict):
-            drift_summary = {}
-        st.metric("Eligibility drift rows", drift_summary.get("eligibility_drift_count", 0))
-        drift_csv_path = drift_summary.get("csv_path")
-        if drift_csv_path and os.path.exists(drift_csv_path):
-            with open(drift_csv_path, "rb") as f:
-                st.download_button(
-                    label="Download eligibility drift CSV",
-                    data=f.read(),
-                    file_name="eligibility_drift.csv",
-                    mime="text/csv",
-                    key=f"eligibility_drift_{run_id}",
-                )
-
-    with st.expander("Reconciliation detail", expanded=False):
-        st.write("Payroll deferrals:", summary_dict.get("total_deferrals_payroll", 0))
-        st.write("Recordkeeper deferrals:", summary_dict.get("total_deferrals_rk", 0))
-        st.write("Payroll loans:", summary_dict.get("total_loans_payroll", 0))
-        st.write("Recordkeeper loans:", summary_dict.get("total_loans_rk", 0))
-
-    with st.expander("Technical Evidence", expanded=False):
-        st.write("Run ID:", run_id)
-        st.write("Status:", st.session_state.get("current_status", "unknown"))
-        st.write("Evidence index:")
-        st.json(summary_dict.get("evidence_index", []))
-        if manifest:
-            st.write("Manifest:")
-            st.json(manifest)
-
-    plan_ex_summary = summary_dict.get("plan_exceptions") if isinstance(summary_dict, dict) else None
-    plan_ex_csv_path = plan_ex_summary.get("csv_path") if isinstance(plan_ex_summary, dict) else None
-    if plan_ex_csv_path and os.path.exists(plan_ex_csv_path):
-        with st.expander("Plan exception summary", expanded=False):
-            with open(plan_ex_csv_path, "rb") as f:
-                st.download_button(
-                    label="Download Plan Exception Summary CSV",
-                    data=f.read(),
-                    file_name="plan_exception_summary.csv",
-                    mime="text/csv",
-                    key="download_plan_exception_summary",
-                )
+    return
 
 
 def render_run_history_tab():

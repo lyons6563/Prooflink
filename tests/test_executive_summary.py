@@ -41,7 +41,7 @@ def _polished_plan_rules() -> dict:
 def test_priority_and_recommended_action_mappings_are_centralized():
     assert SEVERITY_BY_ISSUE_TYPE["EMPLOYMENT_STATUS_CONFLICT"] == "High"
     assert SEVERITY_BY_ISSUE_TYPE["POST_TERMINATION_COMPENSATION"] == "High"
-    assert SEVERITY_BY_ISSUE_TYPE["LATE_CONTRIBUTION"] == "High"
+    assert SEVERITY_BY_ISSUE_TYPE["LATE_CONTRIBUTION"] == "Low"
     assert "Reconcile payroll and recordkeeper" in RECOMMENDED_ACTIONS["DEFERRAL_MISMATCH"]
     assert "Confirm current participant status" in RECOMMENDED_ACTIONS["EMPLOYMENT_STATUS_CONFLICT"]
 
@@ -86,9 +86,9 @@ def test_polished_fixture_executive_summary_integration_without_ground_truth(tmp
     assert summary["payroll_row_count"] == 800
     assert summary["recordkeeper_row_count"] == 793
     assert summary["total_exceptions"] == 12
-    assert summary["high_priority_count"] == 11
-    assert summary["medium_priority_count"] == 1
-    assert summary["low_priority_count"] == 0
+    assert summary["high_priority_count"] == 4
+    assert summary["medium_priority_count"] == 5
+    assert summary["low_priority_count"] == 3
     assert summary["skipped_analyzer_warnings"] == []
 
     assert summary["counts_by_issue_category"] == {
@@ -98,10 +98,10 @@ def test_polished_fixture_executive_summary_integration_without_ground_truth(tmp
         "Compensation/Match": 2,
         "Secure 2.0": 1,
     }
-    assert summary["counts_by_issue_type"]["DEFERRAL_MISMATCH"] == 2
-    assert summary["counts_by_issue_type"]["LATE_CONTRIBUTION"] == 2
-    assert summary["counts_by_issue_type"]["EMPLOYMENT_STATUS_CONFLICT"] == 1
-    assert summary["counts_by_issue_type"]["POST_TERMINATION_COMPENSATION"] == 1
+    assert summary["counts_by_issue_type"]["Deferral amount mismatch"] == 2
+    assert summary["counts_by_issue_type"]["Late contribution deposit"] == 2
+    assert summary["counts_by_issue_type"]["Employment status conflict"] == 1
+    assert summary["counts_by_issue_type"]["Compensation after termination"] == 1
     assert len(summary["recommended_actions"]) >= 8
 
     artifacts = result.summary["executive_summary_artifacts"]
