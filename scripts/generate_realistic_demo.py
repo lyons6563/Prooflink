@@ -40,6 +40,13 @@ GROUND_TRUTH_COLUMNS = [
     "planted_recordkeeper_value", "notes",
 ]
 
+POLISHED_GROUND_TRUTH_COLUMNS = [
+    "scenario_id", "employee_id", "expected_issue_type", "issue_category",
+    "payroll_date", "deposit_date", "expected_payroll_amount",
+    "expected_recordkeeper_amount", "planted_change", "expected_detection",
+    "demo_explanation", "correction_action", "notes",
+]
+
 FIRST_NAMES = "Alex Jordan Taylor Morgan Casey Riley Avery Quinn Jamie Cameron Drew Sam Parker Reese Rowan Emerson Hayden Finley Skyler Kendall".split()
 LAST_NAMES = "Adams Bennett Chen Diaz Ellis Foster Garcia Hughes Ibrahim Johnson Kaur Lee Miller Nguyen Ortiz Patel Robinson Singh Turner Walker".split()
 DEPARTMENTS = ["Operations", "Finance", "Sales", "Engineering", "Clinical", "Logistics", "Customer Care", "HR"]
@@ -259,6 +266,433 @@ recordkeeper:
 """
 
 
+def polished_mapping_yaml() -> str:
+    return """# Mapping for the polished 100-employee ProofLink demo dataset.
+
+payroll:
+  employee_id: {canonical: "employee_id", examples: ["employee_id"]}
+  pay_date: {canonical: "pay_date", examples: ["pay_date"]}
+  ee_deferral: {canonical: "EE Deferral $", examples: ["EE Deferral $"]}
+  ee_roth: {canonical: "EE Roth $", examples: ["EE Roth $"]}
+  loan_amount: {canonical: "loan_amount", examples: ["loan_amount"]}
+  is_hce: {canonical: "is_hce", examples: ["is_hce"]}
+  catchup_pretax: {canonical: "catchup_pretax", examples: ["catchup_pretax"]}
+  catchup_roth: {canonical: "catchup_roth", examples: ["catchup_roth"]}
+  employment_status: {canonical: "employment_status", examples: ["employment_status"]}
+  termination_date: {canonical: "termination_date", examples: ["termination_date"]}
+
+recordkeeper:
+  employee_id: {canonical: "employee_id", examples: ["employee_id"]}
+  pay_date: {canonical: "pay_date", examples: ["pay_date"]}
+  deposit_date: {canonical: "deposit_date", examples: ["deposit_date"]}
+  ee_deferral: {canonical: "EE Deferral $", examples: ["EE Deferral $"]}
+  ee_roth: {canonical: "EE Roth $", examples: ["EE Roth $"]}
+  loan_amount: {canonical: "loan_amount", examples: ["loan_amount"]}
+  employment_status: {canonical: "recordkeeper_employment_status", examples: ["recordkeeper_employment_status"]}
+  termination_date: {canonical: "termination_date", examples: ["termination_date"]}
+"""
+
+
+def polished_scenario_sets(ids: list[str]) -> dict[str, set[str]]:
+    if len(ids) < 15:
+        raise ValueError("The polished profile requires at least 15 employees.")
+    return {
+        "deferral_mismatch": set(ids[0:2]),
+        "loan_mismatch": {ids[2]},
+        "only_in_payroll": {ids[3]},
+        "late_contribution": set(ids[4:6]),
+        "status_conflict": {ids[6]},
+        "post_term_comp": {ids[7]},
+        "secure20_hce_pretax": {ids[8]},
+        "comp_match_under": {ids[9]},
+        "comp_match_over": {ids[10]},
+    }
+
+
+def polished_truth(rows: list[dict[str, str]], **kwargs: object) -> None:
+    row = {column: "" for column in POLISHED_GROUND_TRUTH_COLUMNS}
+    for key, value in kwargs.items():
+        if isinstance(value, date):
+            row[key] = value.isoformat()
+        else:
+            row[key] = str(value)
+    rows.append(row)
+
+
+def _match_amount(plan_comp: float, deferrals: float) -> float:
+    if plan_comp <= 0:
+        return 0.0
+    return min(deferrals, plan_comp * 0.06) * 0.50
+
+
+def generate_polished_dataset(
+    employees: int,
+    year: int,
+    seed: int,
+    output_dir: Path,
+    periods: int,
+    prefix: str | None,
+) -> dict[str, Path]:
+    rng = random.Random(seed)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prefix = prefix or f"prooflink_polished_{employees}"
+    paths = {
+        "payroll": output_dir / f"{prefix}_payroll.csv",
+        "recordkeeper": output_dir / f"{prefix}_recordkeeper.csv",
+        "ground_truth": output_dir / f"{prefix}_ground_truth.csv",
+        "metadata": output_dir / f"{prefix}_metadata.json",
+        "mapping": output_dir / f"{prefix}_mapping.yaml",
+    }
+
+    ids = [f"E{100001 + i}" for i in range(employees)]
+    scenarios = polished_scenario_sets(ids)
+    pay_periods = pay_periods_for_year(year, periods)
+    payroll_rows: list[dict[str, str]] = []
+    rk_rows: list[dict[str, str]] = []
+    truth_rows: list[dict[str, str]] = []
+    clean_loan_ids = set(ids[20:min(24, employees)])
+
+    for index, employee_id in enumerate(ids):
+        annual_salary = 65000 + (index % 20) * 1850 + rng.randint(0, 350)
+        age = 32 + (index % 15)
+        is_hce = False
+        roth_share = 0.25 if index % 3 == 0 else 0.0
+        if employee_id in scenarios["secure20_hce_pretax"]:
+            age = 52
+            is_hce = True
+            roth_share = 1.0
+        dob = date(year - age, 6, 15)
+        hire_date = date(year - 1, 1, 3)
+        termination_date = date(year, 1, 15) if employee_id in scenarios["post_term_comp"] else None
+        has_loan = employee_id in scenarios["loan_mismatch"] or employee_id in clean_loan_ids
+        loan_payment = 85.0 if has_loan else 0.0
+        employee_class = "Full-Time" if index % 5 else "Part-Time"
+        if employee_id in scenarios["comp_match_under"] | scenarios["comp_match_over"]:
+            employee_class = "Full-Time"
+
+        for period, pay_date in enumerate(pay_periods, start=1):
+            active = termination_date is None or pay_date <= termination_date
+            regular = annual_salary / 26 if active else 0.0
+            post_term_period = min(5, periods)
+            if employee_id in scenarios["post_term_comp"] and period == post_term_period:
+                regular = 1800.0
+            overtime = 0.0
+            bonus = 0.0
+            fringe = 35.0 if period == 2 and index % 9 == 0 else 0.0
+            reimbursement = 45.0 if period == 3 and index % 11 == 0 else 0.0
+            gross = regular + overtime + bonus + fringe + reimbursement
+            plan_comp = regular + overtime + bonus
+
+            deferral_rate = 0.05
+            base_deferral = roth_deferral = catchup_pretax = catchup_roth = 0.0
+            if plan_comp > 0:
+                total_deferral = plan_comp * deferral_rate
+                base_deferral = total_deferral * (1 - roth_share)
+                roth_deferral = total_deferral * roth_share
+                if employee_id in scenarios["secure20_hce_pretax"]:
+                    if period == min(6, periods):
+                        catchup_pretax = 850.0
+                    else:
+                        catchup_roth = 1.0
+
+            loan = loan_payment if plan_comp > 0 and has_loan else 0.0
+            er_match = _match_amount(plan_comp, base_deferral + roth_deferral)
+
+            if employee_id in scenarios["comp_match_under"] and period == min(6, periods):
+                expected_match = er_match
+                er_match = max(0.0, er_match - 75.0)
+                polished_truth(
+                    truth_rows,
+                    scenario_id="COMP_MATCH_UNDER",
+                    employee_id=employee_id,
+                    expected_issue_type="Under-match from compensation definition variance",
+                    issue_category="Compensation/Match",
+                    payroll_date=pay_date,
+                    expected_payroll_amount=money(er_match),
+                    expected_recordkeeper_amount="",
+                    planted_change=f"Employer match reduced from expected {money(expected_match)}.",
+                    expected_detection="compensation_match_issues.csv and match_issues.csv",
+                    demo_explanation="The employer match is lower than the plan formula would normally produce for this payroll.",
+                    correction_action="Review payroll setup and calculate whether an employer match true-up or corrective contribution is needed.",
+                    notes="Same participant may also appear in match_issues.csv because both current match analyzers inspect employer match variance.",
+                )
+            if employee_id in scenarios["comp_match_over"] and period == min(6, periods):
+                expected_match = er_match
+                er_match += 90.0
+                polished_truth(
+                    truth_rows,
+                    scenario_id="COMP_MATCH_OVER",
+                    employee_id=employee_id,
+                    expected_issue_type="Over-match from excluded compensation included",
+                    issue_category="Compensation/Match",
+                    payroll_date=pay_date,
+                    expected_payroll_amount=money(er_match),
+                    expected_recordkeeper_amount="",
+                    planted_change=f"Employer match increased above expected {money(expected_match)}.",
+                    expected_detection="compensation_match_issues.csv and match_issues.csv",
+                    demo_explanation="The employer match is higher than expected and should be reviewed before funding corrections are finalized.",
+                    correction_action="Confirm eligible compensation and determine whether match dollars need to be reversed or reclassified.",
+                    notes="Current ProofLink match analyzers use the branch's single-rate match model for this demo.",
+                )
+
+            payroll_status = "Terminated" if termination_date and pay_date > termination_date else "Active"
+            payroll_rows.append({
+                "employee_id": employee_id,
+                "first_name": "Demo",
+                "last_name": f"Participant{index + 1:03d}",
+                "pay_date": pay_date.isoformat(),
+                "pay_period_number": str(period),
+                "Employee Class": employee_class,
+                "department": DEPARTMENTS[index % len(DEPARTMENTS)],
+                "location": LOCATIONS[index % len(LOCATIONS)],
+                "Regular Compensation": money(regular),
+                "Overtime": money(overtime),
+                "Bonus": money(bonus),
+                "Fringe": money(fringe),
+                "Reimbursement": money(reimbursement),
+                "Gross Compensation": money(gross),
+                "Compensation": money(gross),
+                "Plan Compensation": money(plan_comp),
+                "EE Deferral $": money(base_deferral),
+                "EE Roth $": money(roth_deferral),
+                "ER Match $": money(er_match),
+                "True-Up Enabled": "false",
+                "loan_amount": money(loan),
+                "is_hce": "true" if is_hce else "false",
+                "catchup_pretax": money(catchup_pretax),
+                "catchup_roth": money(catchup_roth),
+                "age": str(age),
+                "dob": dob.isoformat(),
+                "hire_date": hire_date.isoformat(),
+                "rehire_date": "",
+                "employment_status": payroll_status,
+                "termination_date": iso(termination_date if payroll_status == "Terminated" else None),
+            })
+
+            if employee_id in scenarios["secure20_hce_pretax"] and period == min(6, periods):
+                polished_truth(
+                    truth_rows,
+                    scenario_id="SECURE20_HCE_PRETAX_CATCHUP",
+                    employee_id=employee_id,
+                    expected_issue_type="HCE catch-up not coded as Roth",
+                    issue_category="Secure 2.0",
+                    payroll_date=pay_date,
+                    expected_payroll_amount=money(catchup_pretax),
+                    expected_recordkeeper_amount="",
+                    planted_change="HCE catch-up contribution coded to pretax instead of Roth.",
+                    expected_detection="secure20_violations.csv",
+                    demo_explanation="An age-50-plus HCE has catch-up dollars in the pretax source, which should be reviewed under Secure 2.0.",
+                    correction_action="Confirm HCE status and reclassify catch-up dollars to Roth if required.",
+                )
+
+            if employee_id in scenarios["only_in_payroll"]:
+                if period == 1:
+                    polished_truth(
+                        truth_rows,
+                        scenario_id="ONLY_IN_PAYROLL",
+                        employee_id=employee_id,
+                        expected_issue_type="ONLY_IN_PAYROLL",
+                        issue_category="Core Reconciliation",
+                        payroll_date=pay_date,
+                        expected_payroll_amount=money(base_deferral + roth_deferral),
+                        expected_recordkeeper_amount="",
+                        planted_change="Participant appears in payroll but has no recordkeeper contribution rows.",
+                        expected_detection="only_in_payroll_deferrals.csv",
+                        demo_explanation="Payroll shows a participant with deferrals, but the recordkeeper file has no matching participant activity.",
+                        correction_action="Confirm whether the participant was omitted from the recordkeeper file or whether payroll should be corrected.",
+                        notes="The timing analyzer also surfaces this participant's eight payroll rows as missing deposits.",
+                    )
+                continue
+
+            rk_base = base_deferral
+            rk_roth = roth_deferral
+            rk_loan = loan
+            deposit_date = business_day_add(pay_date, 2)
+            rk_status = "active"
+            rk_term: date | None = None
+
+            if employee_id in scenarios["status_conflict"]:
+                rk_status = "terminated"
+                if period == 1:
+                    polished_truth(
+                        truth_rows,
+                        scenario_id="EMPLOYMENT_STATUS_CONFLICT",
+                        employee_id=employee_id,
+                        expected_issue_type="EMPLOYMENT_STATUS_CONFLICT",
+                        issue_category="Population Validation",
+                        payroll_date=pay_date,
+                        expected_payroll_amount="Active",
+                        expected_recordkeeper_amount="terminated",
+                        planted_change="Payroll active status conflicts with recordkeeper terminated status.",
+                        expected_detection="population_validation_issues.csv",
+                        demo_explanation="The same employee is active in payroll but terminated at the recordkeeper.",
+                        correction_action="Ask plan operations to confirm the correct status and update the source system that is wrong.",
+                    )
+
+            if employee_id in scenarios["post_term_comp"]:
+                rk_status = ""
+                rk_term = termination_date
+                if period == post_term_period:
+                    polished_truth(
+                        truth_rows,
+                        scenario_id="POST_TERMINATION_COMPENSATION",
+                        employee_id=employee_id,
+                        expected_issue_type="POST_TERMINATION_COMPENSATION",
+                        issue_category="Population Validation",
+                        payroll_date=pay_date,
+                        expected_payroll_amount=money(gross),
+                        expected_recordkeeper_amount=iso(rk_term),
+                        planted_change="Positive compensation appears more than 30 days after the RK termination date.",
+                        expected_detection="population_validation_issues.csv",
+                        demo_explanation="Payroll includes compensation after the recordkeeper termination date, which merits review.",
+                        correction_action="Confirm whether the payment is valid post-termination compensation or a payroll status/data issue.",
+                    )
+
+            if employee_id in scenarios["deferral_mismatch"] and period == min(4, periods):
+                rk_base += 42.0
+                polished_truth(
+                    truth_rows,
+                    scenario_id="DEFERRAL_MISMATCH",
+                    employee_id=employee_id,
+                    expected_issue_type="DEFERRAL_MISMATCH",
+                    issue_category="Core Reconciliation",
+                    payroll_date=pay_date,
+                    deposit_date=deposit_date,
+                    expected_payroll_amount=money(base_deferral + roth_deferral),
+                    expected_recordkeeper_amount=money(rk_base + rk_roth),
+                    planted_change="Recordkeeper employee deferral amount increased by 42.00 for one payroll.",
+                    expected_detection="deferral_mismatches.csv",
+                    demo_explanation="Payroll and recordkeeper contribution amounts do not agree for the participant.",
+                    correction_action="Compare payroll funding to RK posting and correct the source amount or posting if needed.",
+                )
+
+            if employee_id in scenarios["loan_mismatch"] and period == min(5, periods):
+                rk_loan = max(0.0, rk_loan - 30.0)
+                polished_truth(
+                    truth_rows,
+                    scenario_id="LOAN_MISMATCH",
+                    employee_id=employee_id,
+                    expected_issue_type="LOAN_MISMATCH",
+                    issue_category="Core Reconciliation",
+                    payroll_date=pay_date,
+                    deposit_date=deposit_date,
+                    expected_payroll_amount=money(loan),
+                    expected_recordkeeper_amount=money(rk_loan),
+                    planted_change="Recordkeeper loan repayment reduced by 30.00 for one payroll.",
+                    expected_detection="loan_mismatches.csv",
+                    demo_explanation="The loan repayment withheld from payroll is higher than the amount posted at the recordkeeper.",
+                    correction_action="Review loan repayment posting and remit or correct the missing repayment if confirmed.",
+                )
+
+            if employee_id in scenarios["late_contribution"] and period == min(3, periods):
+                deposit_date = business_day_add(pay_date, 9)
+                polished_truth(
+                    truth_rows,
+                    scenario_id="LATE_CONTRIBUTION",
+                    employee_id=employee_id,
+                    expected_issue_type="LATE_CONTRIBUTION",
+                    issue_category="Contribution Timing",
+                    payroll_date=pay_date,
+                    deposit_date=deposit_date,
+                    expected_payroll_amount=pay_date.isoformat(),
+                    expected_recordkeeper_amount=deposit_date.isoformat(),
+                    planted_change="Recordkeeper deposit date delayed to nine business days after payroll.",
+                    expected_detection="late_contributions.csv",
+                    demo_explanation="The contribution was deposited after the demo's five-business-day timing threshold.",
+                    correction_action="Confirm actual funding date and document or correct the late deposit as required.",
+                )
+
+            rk_rows.append({
+                "employee_id": employee_id,
+                "pay_date": pay_date.isoformat(),
+                "deposit_date": deposit_date.isoformat(),
+                "EE Deferral $": money(rk_base),
+                "EE Roth $": money(rk_roth),
+                "loan_amount": money(rk_loan),
+                "recordkeeper_employment_status": rk_status,
+                "termination_date": iso(rk_term),
+                "source_system": "Synthetic RK Trust",
+                "transaction_type": "CONTRIBUTION",
+            })
+
+    phantom_id = f"RKONLY{year}01"
+    phantom_pay_date = pay_periods[min(3, len(pay_periods) - 1)]
+    phantom_deposit_date = business_day_add(phantom_pay_date, 2)
+    rk_rows.append({
+        "employee_id": phantom_id,
+        "pay_date": phantom_pay_date.isoformat(),
+        "deposit_date": phantom_deposit_date.isoformat(),
+        "EE Deferral $": "250.00",
+        "EE Roth $": "0.00",
+        "loan_amount": "0.00",
+        "recordkeeper_employment_status": "active",
+        "termination_date": "",
+        "source_system": "Synthetic RK Trust",
+        "transaction_type": "CONTRIBUTION",
+    })
+    polished_truth(
+        truth_rows,
+        scenario_id="ONLY_IN_RECORDKEEPER",
+        employee_id=phantom_id,
+        expected_issue_type="ONLY_IN_RECORDKEEPER",
+        issue_category="Core Reconciliation",
+        payroll_date=phantom_pay_date,
+        deposit_date=phantom_deposit_date,
+        expected_payroll_amount="",
+        expected_recordkeeper_amount="250.00",
+        planted_change="Recordkeeper-only participant inserted without payroll rows.",
+        expected_detection="only_in_recordkeeper_deferrals.csv",
+        demo_explanation="The recordkeeper file includes a participant contribution that does not appear in payroll.",
+        correction_action="Confirm whether this belongs to another payroll file, another employer, or a recordkeeper data error.",
+        notes="The timing analyzer also surfaces this as one unmatched recordkeeper row.",
+    )
+
+    payroll_rows.sort(key=lambda row: (row["employee_id"], int(row["pay_period_number"])))
+    rk_rows.sort(key=lambda row: (row["employee_id"], row["pay_date"]))
+    truth_rows.sort(key=lambda row: (row["scenario_id"], row["employee_id"], row["payroll_date"]))
+
+    write_csv(paths["payroll"], PAYROLL_COLUMNS, payroll_rows)
+    write_csv(paths["recordkeeper"], RK_COLUMNS, rk_rows)
+    write_csv(paths["ground_truth"], POLISHED_GROUND_TRUTH_COLUMNS, truth_rows)
+    paths["mapping"].write_text(polished_mapping_yaml(), encoding="utf-8")
+
+    metadata = {
+        "dataset_name": f"ProofLink polished {employees}-employee client demo",
+        "profile": "polished",
+        "seed": seed,
+        "year": year,
+        "employee_count": employees,
+        "payroll_period_count": len(pay_periods),
+        "payroll_row_count": len(payroll_rows),
+        "recordkeeper_row_count": len(rk_rows),
+        "ground_truth_row_count": len(truth_rows),
+        "pay_period_start": pay_periods[0].isoformat(),
+        "pay_period_end": pay_periods[-1].isoformat(),
+        "generated_at_utc": "2025-06-30T00:00:00Z",
+        "plan_assumptions": {
+            "plan_year": year,
+            "payroll_frequency": "biweekly",
+            "default_deposit_lag_business_days": "1-3",
+            "late_threshold_business_days": 5,
+            "match_formula_for_current_engine_demo": "50% of deferrals up to 6% of eligible compensation",
+            "target_plan_formula_note": "The client-facing guide describes the common 100% of first 3% plus 50% of next 2% formula; current branch analyzers model a single-rate equivalent, so this generated dataset is calibrated to the branch's active analyzer.",
+            "loans": "Small subset only",
+            "reimbursements": "Excluded from plan compensation",
+        },
+        "scenario_counts": {},
+        "schema_notes": {
+            "payroll": "Synthetic labels only; no names, SSNs, addresses, emails, or real employer data.",
+            "recordkeeper": "Canonical contribution rows with payroll reference dates for period-level timing alignment.",
+            "ground_truth": "Client-facing explanation of each deliberately planted issue.",
+        },
+    }
+    for row in truth_rows:
+        metadata["scenario_counts"][row["scenario_id"]] = metadata["scenario_counts"].get(row["scenario_id"], 0) + 1
+    metadata["files"] = {key: {"path": path.name, "sha256": sha256(path)} for key, path in paths.items() if key != "metadata"}
+    paths["metadata"].write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    return paths
+
+
 def write_csv(path: Path, columns: list[str], rows: list[dict[str, str]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
@@ -281,7 +715,13 @@ def generate_dataset(
     output_dir: Path = DEFAULT_OUTPUT_DIR,
     periods: int = 26,
     prefix: str | None = None,
+    profile: str = "realistic",
 ) -> dict[str, Path]:
+    if profile == "polished":
+        return generate_polished_dataset(employees, year, seed, output_dir, periods, prefix)
+    if profile != "realistic":
+        raise ValueError(f"Unsupported demo profile: {profile}")
+
     rng = random.Random(seed)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = prefix or f"realistic_{employees}"
@@ -428,6 +868,7 @@ def generate_dataset(
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate the deterministic realistic ProofLink demo dataset.")
+    parser.add_argument("--profile", choices=["realistic", "polished"], default="realistic")
     parser.add_argument("--employees", type=int, default=DEFAULT_EMPLOYEES)
     parser.add_argument("--year", type=int, default=DEFAULT_YEAR)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -443,8 +884,16 @@ def main(argv: Iterable[str] | None = None) -> int:
         raise SystemExit("--employees must be positive")
     if args.periods < 1:
         raise SystemExit("--periods must be positive")
-    paths = generate_dataset(args.employees, args.year, args.seed, args.output_dir, args.periods, args.prefix)
-    print("Generated realistic ProofLink demo dataset:")
+    paths = generate_dataset(
+        args.employees,
+        args.year,
+        args.seed,
+        args.output_dir,
+        args.periods,
+        args.prefix,
+        profile=args.profile,
+    )
+    print(f"Generated {args.profile} ProofLink demo dataset:")
     for key, path in paths.items():
         print(f"  {key}: {path}")
     return 0
